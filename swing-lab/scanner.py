@@ -211,9 +211,12 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
         return json.loads(default_cached_dataset())
 
 
-def generate_trade_candidates() -> list[dict[str, Any]]:
+def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     for asset_class, symbols in WATCHLIST.items():
+        if asset_class not in enabled_asset_classes:
+            continue
         for asset in symbols:
             dataset = fetch_asset_data(asset, asset_class)
             daily_bars = dataset["1d"]

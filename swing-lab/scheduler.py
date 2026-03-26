@@ -4,8 +4,19 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-from config import DAILY_SUMMARY_HOUR, MAX_TRADES_PER_DAY, SCAN_INTERVAL_HOURS, UPDATE_INTERVAL_MINUTES
+from config import (
+    DAILY_SUMMARY_HOUR,
+    MAX_TRADES_PER_DAY,
+    SCAN_INTERVAL_HOURS,
+    UPDATE_INTERVAL_MINUTES,
+    US_MARKET_CLOSE_HOUR,
+    US_MARKET_CLOSE_MINUTE,
+    US_MARKET_OPEN_HOUR,
+    US_MARKET_OPEN_MINUTE,
+    US_MARKET_TIMEZONE,
+)
 from metrics import calculate_summary
 from scanner import generate_trade_candidates
 from telegram import notify_daily_summary
@@ -13,6 +24,7 @@ from trades import create_trades_from_candidates, trades_opened_today, update_op
 
 
 LOGGER = logging.getLogger(__name__)
+US_MARKET_TZ = ZoneInfo(US_MARKET_TIMEZONE)
 
 
 class SwingLabScheduler:
@@ -36,19 +48,37 @@ class SwingLabScheduler:
         if self._thread:
             self._thread.join(timeout=2)
 
-    def run_scan_cycle(self) -> None:
+    def _is_us_market_open(self, now_utc: datetime) -> bool:
+        market_now = now_utc.astimezone(US_MARKET_TZ)
+        if market_now.weekday() >= 5:
+            return False
+        market_minutes = market_now.hour * 60 + market_now.minute
+        open_minutes = US_MARKET_OPEN_HOUR * 60 + US_MARKET_OPEN_MINUTE
+        close_minutes = US_MARKET_CLOSE_HOUR * 60 + US_MARKET_CLOSE_MINUTE
+        return open_minutes <= market_minutes <= close_minutes
+
+    def run_scan_cycle(self, now_utc: datetime | None = None) -> None:
+        now_utc = now_utc or datetime.now(tz=timezone.utc)
         opened_today = trades_opened_today()
         if opened_today >= MAX_TRADES_PER_DAY:
             LOGGER.info("Daily trade limit reached, skipping scan")
             return
-        candidates = generate_trade_candidates()
+        asset_classes = ["crypto"]
+        if self._is_us_market_open(now_utc):
+            asset_classes.extend(["stock", "etf"])
+        candidates = generate_trade_candidates(asset_classes=asset_classes)
         remaining_slots = MAX_TRADES_PER_DAY - opened_today
         created = create_trades_from_candidates(candidates, limit=remaining_slots)
-        LOGGER.info("Scan completed, %s trades created", len(created))
+        LOGGER.info("Scan completed for %s, %s trades created", ",".join(asset_classes), len(created))
 
-    def run_update_cycle(self) -> None:
-        updated = update_open_trades()
-        LOGGER.info("Updated %s open trades", len(updated))
+    def run_update_cycle(self, now_utc: datetime | None = None) -> None:
+        now_utc = now_utc or datetime.now(tz=timezone.utc)
+        updated = update_open_trades(asset_classes=["crypto"])
+        if self._is_us_market_open(now_utc):
+            updated.extend(update_open_trades(asset_classes=["stock", "etf"]))
+            LOGGER.info("Updated %s open trades across crypto, stocks, and ETFs", len(updated))
+            return
+        LOGGER.info("Updated %s open crypto trades outside US market hours", len(updated))
 
     def run_daily_summary(self) -> None:
         summary = calculate_summary()
@@ -61,13 +91,13 @@ class SwingLabScheduler:
 
             scan_marker = (now.toordinal(), now.hour // SCAN_INTERVAL_HOURS)
             if self._last_scan_hour != scan_marker and now.hour % SCAN_INTERVAL_HOURS == 0:
-                self.run_scan_cycle()
+                self.run_scan_cycle(now)
                 self._last_scan_hour = scan_marker
 
             update_bucket = now.minute // UPDATE_INTERVAL_MINUTES
             update_marker = (now.year, now.month, now.day, now.hour * 10 + update_bucket)
             if self._last_update_marker != update_marker:
-                self.run_update_cycle()
+                self.run_update_cycle(now)
                 self._last_update_marker = update_marker
 
             date_key = now.date().isoformat()

@@ -82,7 +82,12 @@ def create_trades_from_candidates(candidates: list[dict[str, Any]], limit: int |
     return created_ids
 
 
-def list_trades(status: str | None = None, strategy: str | None = None, asset: str | None = None) -> list[dict[str, Any]]:
+def list_trades(
+    status: str | None = None,
+    strategy: str | None = None,
+    asset: str | None = None,
+    asset_classes: list[str] | None = None,
+) -> list[dict[str, Any]]:
     query = "SELECT * FROM trades WHERE 1=1"
     params: list[Any] = []
     if status:
@@ -97,6 +102,10 @@ def list_trades(status: str | None = None, strategy: str | None = None, asset: s
     if asset:
         query += " AND asset = ?"
         params.append(asset)
+    if asset_classes:
+        placeholders = ", ".join("?" for _ in asset_classes)
+        query += f" AND asset_class IN ({placeholders})"
+        params.extend(asset_classes)
     query += " ORDER BY date_opened DESC"
     return [_row_to_trade(row) for row in fetch_all(query, tuple(params))]
 
@@ -127,9 +136,9 @@ def _close_trade(trade: dict[str, Any], status: str, current_price: float, resul
     LOGGER.info("Closed trade %s with status %s", trade["id"], status)
 
 
-def update_open_trades() -> list[dict[str, Any]]:
+def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
     updated: list[dict[str, Any]] = []
-    for trade in list_trades(status="open"):
+    for trade in list_trades(status="open", asset_classes=asset_classes):
         current_price = _current_price_for_trade(trade)
         if current_price is None:
             continue
