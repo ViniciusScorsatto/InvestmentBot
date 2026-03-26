@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }}</title>
+  <style>
+    :root {
+      --bg: #f5f4ef;
+      --card: #fffdf7;
+      --text: #16211d;
+      --muted: #67726b;
+      --line: #d8d3c4;
+      --accent: #0f766e;
+      --green: #e9f9ef;
+      --red: #fdecec;
+    }
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: linear-gradient(180deg, #f1efe6 0%, #faf8f2 100%); color: var(--text); }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 60px; }
+    nav a { margin-right: 16px; color: var(--accent); text-decoration: none; font-weight: bold; }
+    h1, h2 { margin-bottom: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 24px 0; }
+    .card, .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 10px 30px rgba(38, 46, 41, 0.05); }
+    .card { padding: 18px; }
+    .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .value { font-size: 28px; margin-top: 8px; font-weight: bold; }
+    .panel { padding: 18px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
+    th { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+    .positive { background: var(--green); }
+    .negative { background: var(--red); }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a href="/">Home</a>
+      <a href="/trades">Trades</a>
+      <a href="/analytics">Analytics</a>
+    </nav>
+
+    <h1>{{ app_name }}</h1>
+    <p class="muted">Automated swing-trading simulator for research and learning only.</p>
+
+    <div class="cards">
+      <div class="card"><div class="label">Total Trades</div><div class="value">{{ summary.total_trades }}</div></div>
+      <div class="card"><div class="label">Win Rate</div><div class="value">{{ summary.win_rate }}%</div></div>
+      <div class="card"><div class="label">Avg R</div><div class="value">{{ summary.avg_R }}</div></div>
+      <div class="card"><div class="label">Total R</div><div class="value">{{ summary.total_R }}</div></div>
+      <div class="card"><div class="label">Open Trades</div><div class="value">{{ summary.open_trades_count }}</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Open Trades</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>Strategy</th>
+            <th>Entry</th>
+            <th>Current Price</th>
+            <th>Unrealized R</th>
+            <th>Days Open</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for trade in open_trades %}
+          <tr class="{% if trade.unrealized_R is not none and trade.unrealized_R >= 0 %}positive{% elif trade.unrealized_R is not none %}negative{% endif %}">
+            <td><a href="/trades/{{ trade.id }}">{{ trade.asset }}</a></td>
+            <td>{{ trade.strategy }}</td>
+            <td>{{ trade.entry_price }}</td>
+            <td>{{ trade.current_price or "-" }}</td>
+            <td>{{ trade.unrealized_R if trade.unrealized_R is not none else "-" }}</td>
+            <td>{{ trade.days_open }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="muted">No open trades yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

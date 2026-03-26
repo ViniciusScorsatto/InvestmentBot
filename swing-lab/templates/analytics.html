@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics | {{ app_name }}</title>
+  <style>
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: #faf8f2; color: #1d2b27; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
+    nav a { margin-right: 16px; color: #0f766e; text-decoration: none; font-weight: bold; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .panel { background: #fffdf7; border: 1px solid #d8d3c4; border-radius: 14px; padding: 18px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #e4ddcb; }
+    th { font-size: 13px; text-transform: uppercase; color: #66726b; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a href="/">Home</a>
+      <a href="/trades">Trades</a>
+      <a href="/analytics">Analytics</a>
+    </nav>
+
+    <h1>Analytics</h1>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>By Strategy</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Win Rate</th>
+              <th>Avg R</th>
+              <th>Total Trades</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in strategy_stats %}
+            <tr>
+              <td>{{ row.strategy }}</td>
+              <td>{{ row.win_rate }}%</td>
+              <td>{{ row.avg_R }}</td>
+              <td>{{ row.total_trades }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No strategy data yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>By Asset Class</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Asset Class</th>
+              <th>Win Rate</th>
+              <th>Avg R</th>
+              <th>Total R</th>
+              <th>Total Trades</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in asset_class_stats %}
+            <tr>
+              <td>{{ row.asset_class }}</td>
+              <td>{{ row.win_rate }}%</td>
+              <td>{{ row.avg_R }}</td>
+              <td>{{ row.total_R }}</td>
+              <td>{{ row.total_trades }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No asset class data yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

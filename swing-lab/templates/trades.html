@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trades | {{ app_name }}</title>
+  <style>
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: #faf8f2; color: #1d2b27; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 60px; }
+    nav a { margin-right: 16px; color: #0f766e; text-decoration: none; font-weight: bold; }
+    .panel { background: #fffdf7; border: 1px solid #d8d3c4; border-radius: 14px; padding: 18px; }
+    form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    input, select, button { padding: 10px 12px; border-radius: 10px; border: 1px solid #cabfa6; font: inherit; }
+    button { background: #0f766e; color: white; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #e4ddcb; }
+    th { font-size: 13px; text-transform: uppercase; color: #66726b; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a href="/">Home</a>
+      <a href="/trades">Trades</a>
+      <a href="/analytics">Analytics</a>
+    </nav>
+
+    <h1>Trades</h1>
+
+    <div class="panel">
+      <form method="get" action="/trades">
+        <input type="text" name="status" value="{{ filters.status }}" placeholder="status: open or closed">
+        <input type="text" name="strategy" value="{{ filters.strategy }}" placeholder="strategy">
+        <input type="text" name="asset" value="{{ filters.asset }}" placeholder="asset">
+        <button type="submit">Filter</button>
+      </form>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>Strategy</th>
+            <th>Entry</th>
+            <th>Stop</th>
+            <th>Target</th>
+            <th>Status</th>
+            <th>Result R</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for trade in trades %}
+          <tr>
+            <td><a href="/trades/{{ trade.id }}">{{ trade.asset }}</a></td>
+            <td>{{ trade.strategy }}</td>
+            <td>{{ trade.entry_price }}</td>
+            <td>{{ trade.stop_loss }}</td>
+            <td>{{ trade.target_price }}</td>
+            <td>{{ trade.status }}</td>
+            <td>{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7">No trades found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

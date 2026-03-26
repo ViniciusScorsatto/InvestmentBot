@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trade Detail | {{ app_name }}</title>
+  <style>
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: #faf8f2; color: #1d2b27; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 32px 20px 60px; }
+    nav a { margin-right: 16px; color: #0f766e; text-decoration: none; font-weight: bold; }
+    .panel { background: #fffdf7; border: 1px solid #d8d3c4; border-radius: 14px; padding: 22px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+    .item { padding: 14px; border: 1px solid #e3dccb; border-radius: 12px; background: #fff; }
+    .label { font-size: 12px; color: #67726b; text-transform: uppercase; letter-spacing: 0.08em; }
+    .value { font-size: 22px; font-weight: bold; margin-top: 8px; }
+    pre { white-space: pre-wrap; font-family: Menlo, monospace; font-size: 13px; background: #f4f0e7; padding: 14px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a href="/">Home</a>
+      <a href="/trades">Trades</a>
+      <a href="/analytics">Analytics</a>
+    </nav>
+
+    <h1>{{ trade.asset }} Trade</h1>
+
+    <div class="panel">
+      <div class="grid">
+        <div class="item"><div class="label">Strategy</div><div class="value">{{ trade.strategy }}</div></div>
+        <div class="item"><div class="label">Timeframe</div><div class="value">{{ trade.timeframe }}</div></div>
+        <div class="item"><div class="label">Status</div><div class="value">{{ trade.status }}</div></div>
+        <div class="item"><div class="label">Score</div><div class="value">{{ trade.score }}</div></div>
+        <div class="item"><div class="label">Entry</div><div class="value">{{ trade.entry_price }}</div></div>
+        <div class="item"><div class="label">Stop</div><div class="value">{{ trade.stop_loss }}</div></div>
+        <div class="item"><div class="label">Target</div><div class="value">{{ trade.target_price }}</div></div>
+        <div class="item"><div class="label">Current Price</div><div class="value">{{ trade.current_price or "-" }}</div></div>
+        <div class="item"><div class="label">Unrealized R</div><div class="value">{{ trade.unrealized_R if trade.unrealized_R is not none else "-" }}</div></div>
+        <div class="item"><div class="label">Days Open</div><div class="value">{{ trade.days_open }}</div></div>
+      </div>
+
+      <h2>Setup Notes</h2>
+      <pre>{{ trade.setup_notes or "No notes stored." }}</pre>
+    </div>
+  </div>
+</body>
+</html>
