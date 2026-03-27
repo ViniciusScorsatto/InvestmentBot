@@ -1,26 +1,26 @@
 from __future__ import annotations
 
-import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Iterator
 
-from config import DATA_DIR, DB_PATH
+import psycopg
+from psycopg.rows import dict_row
+
+from config import DATABASE_URL
 
 
-def ensure_data_dir() -> None:
-    Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+def _require_database_url() -> str:
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required. Configure Railway/Postgres before starting the app.")
+    return DATABASE_URL
 
 
-def get_connection() -> sqlite3.Connection:
-    ensure_data_dir()
-    connection = sqlite3.connect(DB_PATH, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    return connection
+def get_connection() -> psycopg.Connection[Any]:
+    return psycopg.connect(_require_database_url(), row_factory=dict_row)
 
 
 @contextmanager
-def get_db() -> Iterator[sqlite3.Connection]:
+def get_db() -> Iterator[psycopg.Connection[Any]]:
     connection = get_connection()
     try:
         yield connection
@@ -34,21 +34,21 @@ def initialize_db() -> None:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 asset TEXT NOT NULL,
                 asset_class TEXT NOT NULL,
                 strategy TEXT NOT NULL,
                 timeframe TEXT NOT NULL,
-                entry_price REAL NOT NULL,
-                stop_loss REAL NOT NULL,
-                target_price REAL NOT NULL,
-                current_price REAL,
-                R_multiple REAL NOT NULL,
+                entry_price DOUBLE PRECISION NOT NULL,
+                stop_loss DOUBLE PRECISION NOT NULL,
+                target_price DOUBLE PRECISION NOT NULL,
+                current_price DOUBLE PRECISION,
+                R_multiple DOUBLE PRECISION NOT NULL,
                 score INTEGER NOT NULL,
-                date_opened TEXT NOT NULL,
+                date_opened TIMESTAMPTZ NOT NULL,
                 status TEXT NOT NULL,
-                date_closed TEXT,
-                result_R REAL,
+                date_closed TIMESTAMPTZ,
+                result_R DOUBLE PRECISION,
                 setup_notes TEXT,
                 metadata_json TEXT
             )
@@ -72,26 +72,30 @@ def initialize_db() -> None:
                 asset TEXT NOT NULL,
                 asset_class TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
-                fetched_at TEXT NOT NULL,
+                fetched_at TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (asset, asset_class)
             )
             """
         )
 
 
-def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     with get_db() as connection:
         cursor = connection.execute(query, params)
         return cursor.fetchall()
 
 
-def fetch_one(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+def fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
     with get_db() as connection:
         cursor = connection.execute(query, params)
         return cursor.fetchone()
 
 
-def execute(query: str, params: tuple[Any, ...] = ()) -> int:
+def execute(query: str, params: tuple[Any, ...] = ()) -> int | None:
     with get_db() as connection:
         cursor = connection.execute(query, params)
-        return int(cursor.lastrowid)
+        if cursor.description:
+            row = cursor.fetchone()
+            if row and "id" in row:
+                return int(row["id"])
+        return None

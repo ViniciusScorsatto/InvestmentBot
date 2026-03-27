@@ -13,6 +13,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 router = APIRouter()
 
 
+@router.get("/healthz")
+def healthcheck() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     summary = calculate_summary()

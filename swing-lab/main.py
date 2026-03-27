@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from api import router
-from config import APP_HOST, APP_NAME, APP_PORT
+from config import APP_HOST, APP_NAME, APP_PORT, DATABASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from db import initialize_db
 from scheduler import SwingLabScheduler
 
@@ -23,6 +23,12 @@ scheduler = SwingLabScheduler()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_db()
+    logging.getLogger(__name__).info(
+        "Starting %s on database=%s telegram_configured=%s",
+        APP_NAME,
+        DATABASE_URL.split("@")[-1] if DATABASE_URL else "missing",
+        bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
+    )
     scheduler.start()
     try:
         yield

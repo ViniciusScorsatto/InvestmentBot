@@ -6,13 +6,12 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "trades.db"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
 APP_NAME = "Swing Lab Auto"
-APP_HOST = os.getenv("SWING_LAB_HOST", "127.0.0.1")
-APP_PORT = int(os.getenv("SWING_LAB_PORT", "8000"))
+APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
+APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 MAX_TRADES_PER_DAY = 5
 PREFERRED_TOP_SETUPS = 3
@@ -50,17 +49,16 @@ WATCHLIST = {
 }
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-COINGECKO_MARKET_CHART_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+KRAKEN_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
 
-CRYPTO_SYMBOL_TO_COINGECKO_ID = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "BNB": "binancecoin",
-    "XRP": "ripple",
-    "ADA": "cardano",
-    "AVAX": "avalanche-2",
-    "LINK": "chainlink",
+CRYPTO_SYMBOL_TO_KRAKEN_PAIR = {
+    "BTC": "BTC/USD",
+    "ETH": "ETH/USD",
+    "SOL": "SOL/USD",
+    "XRP": "XRP/USD",
+    "ADA": "ADA/USD",
+    "AVAX": "AVAX/USD",
+    "LINK": "LINK/USD",
 }
 
 

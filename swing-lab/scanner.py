@@ -9,9 +9,9 @@ from typing import Any
 import requests
 
 from config import (
-    COINGECKO_MARKET_CHART_URL,
     CRYPTO_REQUEST_DELAY_SECONDS,
-    CRYPTO_SYMBOL_TO_COINGECKO_ID,
+    CRYPTO_SYMBOL_TO_KRAKEN_PAIR,
+    KRAKEN_OHLC_URL,
     MAX_TRADES_PER_DAY,
     MIN_R_MULTIPLE,
     MIN_SCORE,
@@ -62,13 +62,15 @@ def _cached_market_data(asset: str, asset_class: str) -> dict[str, list[dict[str
         """
         SELECT payload_json, fetched_at
         FROM market_data_cache
-        WHERE asset = ? AND asset_class = ?
+        WHERE asset = %s AND asset_class = %s
         """,
         (asset, asset_class),
     )
     if not row:
         return None
-    fetched_at = datetime.fromisoformat(row["fetched_at"])
+    fetched_at = row["fetched_at"]
+    if isinstance(fetched_at, str):
+        fetched_at = datetime.fromisoformat(fetched_at)
     if datetime.now(tz=timezone.utc) - fetched_at > timedelta(seconds=cache_ttl_for(asset_class)):
         return None
     return json.loads(row["payload_json"])
@@ -78,11 +80,11 @@ def _store_market_data(asset: str, asset_class: str, payload: dict[str, list[dic
     execute(
         """
         INSERT INTO market_data_cache (asset, asset_class, payload_json, fetched_at)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
         ON CONFLICT(asset, asset_class)
         DO UPDATE SET payload_json = excluded.payload_json, fetched_at = excluded.fetched_at
         """,
-        (asset, asset_class, json.dumps(payload), datetime.now(tz=timezone.utc).isoformat()),
+        (asset, asset_class, json.dumps(payload), datetime.now(tz=timezone.utc)),
     )
 
 
@@ -91,7 +93,7 @@ def _most_recent_cached_market_data(asset: str, asset_class: str) -> dict[str, l
         """
         SELECT payload_json
         FROM market_data_cache
-        WHERE asset = ? AND asset_class = ?
+        WHERE asset = %s AND asset_class = %s
         """,
         (asset, asset_class),
     )
@@ -145,42 +147,38 @@ def _fetch_yahoo_chart(symbol: str, interval: str, range_value: str) -> list[dic
     return bars
 
 
-def _fetch_coingecko_chart(symbol: str, days: int, interval: str = "hourly") -> list[dict[str, Any]]:
+def _fetch_kraken_chart(symbol: str, interval_minutes: int = 60) -> list[dict[str, Any]]:
     _respect_crypto_rate_limit()
-    coin_id = CRYPTO_SYMBOL_TO_COINGECKO_ID[symbol]
-    url = COINGECKO_MARKET_CHART_URL.format(coin_id=coin_id)
-    params = {"vs_currency": "usd", "days": days, "interval": interval}
+    pair = CRYPTO_SYMBOL_TO_KRAKEN_PAIR.get(symbol)
+    if not pair:
+        LOGGER.warning("Kraken pair not configured for %s, skipping crypto fetch", symbol)
+        return []
     response = requests.get(
-        url,
-        params=params,
+        KRAKEN_OHLC_URL,
+        params={"pair": pair, "interval": interval_minutes},
         timeout=20,
         headers={"User-Agent": "SwingLabAuto/1.0"},
     )
-    if response.status_code == 400 and interval == "hourly":
-        fallback_days = min(days, 90)
-        response = requests.get(
-            url,
-            params={"vs_currency": "usd", "days": fallback_days},
-            timeout=20,
-            headers={"User-Agent": "SwingLabAuto/1.0"},
-        )
     payload = _safe_json(response)
-    prices = payload.get("prices", [])
-    volumes = payload.get("total_volumes", [])
+    errors = payload.get("error", [])
+    if errors:
+        raise requests.HTTPError(", ".join(errors), response=response)
+    result = payload.get("result", {})
+    ohlc_key = next((key for key in result.keys() if key != "last"), None)
+    if not ohlc_key:
+        return []
+    candles = result.get(ohlc_key, [])
     bars: list[dict[str, Any]] = []
-    for index in range(1, len(prices)):
-        current_price = float(prices[index][1])
-        previous_price = float(prices[index - 1][1])
-        timestamp = int(prices[index][0] / 1000)
-        volume = float(volumes[index][1]) if index < len(volumes) else 0.0
+    for candle in candles:
+        timestamp, open_price, high_price, low_price, close_price, _, volume, _ = candle
         bars.append(
             {
                 "timestamp": _to_iso(timestamp),
-                "open": previous_price,
-                "high": max(previous_price, current_price),
-                "low": min(previous_price, current_price),
-                "close": current_price,
-                "volume": volume,
+                "open": float(open_price),
+                "high": float(high_price),
+                "low": float(low_price),
+                "close": float(close_price),
+                "volume": float(volume),
             }
         )
     return bars
@@ -192,7 +190,7 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
         return cached
     try:
         if asset_class == "crypto":
-            hourly = _fetch_coingecko_chart(asset, days=90, interval="hourly")
+            hourly = _fetch_kraken_chart(asset, interval_minutes=60)
             daily = _aggregate_bars(hourly, 24)
             four_hour = _aggregate_bars(hourly, 4)
         else:

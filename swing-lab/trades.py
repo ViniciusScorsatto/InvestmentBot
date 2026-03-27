@@ -14,14 +14,27 @@ from telegram import notify_trade_closed, notify_new_trade
 LOGGER = logging.getLogger(__name__)
 
 
+def _now_utc() -> datetime:
+    return datetime.now(tz=timezone.utc)
+
+
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
+    return _now_utc().isoformat()
+
+
+def _coerce_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
 
 
 def _row_to_trade(row: Any) -> dict[str, Any]:
     trade = dict(row)
     metadata_json = trade.get("metadata_json")
     trade["metadata"] = json.loads(metadata_json) if metadata_json else {}
+    for key in ("date_opened", "date_closed"):
+        if trade.get(key) is not None and isinstance(trade[key], datetime):
+            trade[key] = trade[key].isoformat()
     return trade
 
 
@@ -29,7 +42,7 @@ def get_open_trade(asset: str, timeframe: str) -> dict[str, Any] | None:
     row = fetch_one(
         """
         SELECT * FROM trades
-        WHERE asset = ? AND timeframe = ? AND status = 'open'
+        WHERE asset = %s AND timeframe = %s AND status = 'open'
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -48,7 +61,8 @@ def create_trade(setup: dict[str, Any]) -> int | None:
             entry_price, stop_loss, target_price, current_price,
             R_multiple, score, date_opened, status,
             setup_notes, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s)
+        RETURNING id
         """,
         (
             setup["asset"],
@@ -61,7 +75,7 @@ def create_trade(setup: dict[str, Any]) -> int | None:
             setup["entry_price"],
             setup["R_multiple"],
             setup["score"],
-            _now_iso(),
+            _now_utc(),
             setup.get("setup_notes", ""),
             json.dumps(setup.get("components", {})),
         ),
@@ -94,16 +108,16 @@ def list_trades(
         if status == "closed":
             query += " AND status != 'open'"
         else:
-            query += " AND status = ?"
+            query += " AND status = %s"
             params.append(status)
     if strategy:
-        query += " AND strategy = ?"
+        query += " AND strategy = %s"
         params.append(strategy)
     if asset:
-        query += " AND asset = ?"
+        query += " AND asset = %s"
         params.append(asset)
     if asset_classes:
-        placeholders = ", ".join("?" for _ in asset_classes)
+        placeholders = ", ".join("%s" for _ in asset_classes)
         query += f" AND asset_class IN ({placeholders})"
         params.extend(asset_classes)
     query += " ORDER BY date_opened DESC"
@@ -111,7 +125,7 @@ def list_trades(
 
 
 def get_trade(trade_id: int) -> dict[str, Any] | None:
-    row = fetch_one("SELECT * FROM trades WHERE id = ?", (trade_id,))
+    row = fetch_one("SELECT * FROM trades WHERE id = %s", (trade_id,))
     return _row_to_trade(row) if row else None
 
 
@@ -127,10 +141,10 @@ def _close_trade(trade: dict[str, Any], status: str, current_price: float, resul
     execute(
         """
         UPDATE trades
-        SET status = ?, current_price = ?, date_closed = ?, result_R = ?
-        WHERE id = ?
+        SET status = %s, current_price = %s, date_closed = %s, result_R = %s
+        WHERE id = %s
         """,
-        (status, current_price, _now_iso(), round(result_r, 2), trade["id"]),
+        (status, current_price, _now_utc(), round(result_r, 2), trade["id"]),
     )
     notify_trade_closed(trade, status, result_r)
     LOGGER.info("Closed trade %s with status %s", trade["id"], status)
@@ -143,12 +157,12 @@ def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str,
         if current_price is None:
             continue
 
-        execute("UPDATE trades SET current_price = ? WHERE id = ?", (current_price, trade["id"]))
+        execute("UPDATE trades SET current_price = %s WHERE id = %s", (current_price, trade["id"]))
         risk = trade["entry_price"] - trade["stop_loss"]
         if risk <= 0:
             continue
 
-        days_open = (datetime.now(tz=timezone.utc) - datetime.fromisoformat(trade["date_opened"])).days
+        days_open = (_now_utc() - _coerce_datetime(trade["date_opened"])).days
         if current_price <= trade["stop_loss"]:
             _close_trade(trade, "stopped", current_price, -1.0)
         elif current_price >= trade["target_price"]:
@@ -172,15 +186,15 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
 def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
     display = dict(trade)
     display["unrealized_R"] = compute_unrealized_r(trade)
-    opened_at = datetime.fromisoformat(trade["date_opened"])
-    display["days_open"] = (datetime.now(tz=timezone.utc) - opened_at).days
+    opened_at = _coerce_datetime(trade["date_opened"])
+    display["days_open"] = (_now_utc() - opened_at).days
     return display
 
 
 def trades_opened_today() -> int:
-    day_start = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = _now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
     row = fetch_one(
-        "SELECT COUNT(*) AS total FROM trades WHERE date_opened >= ?",
-        (day_start.isoformat(),),
+        "SELECT COUNT(*) AS total FROM trades WHERE date_opened >= %s",
+        (day_start,),
     )
     return int(row["total"]) if row else 0
