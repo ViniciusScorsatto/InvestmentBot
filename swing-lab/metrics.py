@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from config import CRYPTO_SYMBOL_TO_KRAKEN_PAIR, UNSUPPORTED_CRYPTO_WATCHLIST
+from db import ping_database
+from runtime_status import get_status
 from trades import enrich_trade_for_display, list_trades
 
 
@@ -72,3 +75,15 @@ def analytics_by_asset_class() -> list[dict[str, Any]]:
             }
         )
     return sorted(analytics, key=lambda item: item["total_trades"], reverse=True)
+
+
+def calculate_system_status() -> dict[str, Any]:
+    runtime = get_status()
+    return {
+        "db_healthy": ping_database(),
+        "crypto_provider": "Kraken",
+        "equity_provider": "Yahoo Finance",
+        "supported_crypto_symbols": sorted(CRYPTO_SYMBOL_TO_KRAKEN_PAIR.keys()),
+        "unsupported_crypto_symbols": UNSUPPORTED_CRYPTO_WATCHLIST,
+        "runtime": runtime,
+    }

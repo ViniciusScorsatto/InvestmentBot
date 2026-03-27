@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from threading import Lock
+from typing import Any
+
+
+_LOCK = Lock()
+_STATUS: dict[str, Any] = {
+    "started_at": None,
+    "last_scan_at": None,
+    "last_update_at": None,
+    "last_summary_at": None,
+    "last_scan_assets": [],
+    "last_error": None,
+}
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def mark_started() -> None:
+    with _LOCK:
+        _STATUS["started_at"] = _now_iso()
+
+
+def mark_scan(asset_classes: list[str]) -> None:
+    with _LOCK:
+        _STATUS["last_scan_at"] = _now_iso()
+        _STATUS["last_scan_assets"] = list(asset_classes)
+
+
+def mark_update() -> None:
+    with _LOCK:
+        _STATUS["last_update_at"] = _now_iso()
+
+
+def mark_summary() -> None:
+    with _LOCK:
+        _STATUS["last_summary_at"] = _now_iso()
+
+
+def mark_error(location: str, error: Exception) -> None:
+    with _LOCK:
+        _STATUS["last_error"] = {
+            "at": _now_iso(),
+            "location": location,
+            "message": str(error),
+        }
+
+
+def get_status() -> dict[str, Any]:
+    with _LOCK:
+        status = dict(_STATUS)
+        status["last_scan_assets"] = list(_STATUS["last_scan_assets"])
+        status["last_error"] = dict(_STATUS["last_error"]) if _STATUS["last_error"] else None
+        return status

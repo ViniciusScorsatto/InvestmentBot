@@ -79,6 +79,14 @@ def initialize_db() -> None:
         )
 
 
+def ping_database() -> bool:
+    try:
+        row = fetch_one("SELECT 1 AS ok")
+    except Exception:
+        return False
+    return bool(row and row.get("ok") == 1)
+
+
 def fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     with get_db() as connection:
         cursor = connection.execute(query, params)

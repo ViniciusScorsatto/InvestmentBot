@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from config import APP_NAME, TEMPLATES_DIR
-from metrics import analytics_by_asset_class, analytics_by_strategy, calculate_summary
+from metrics import analytics_by_asset_class, analytics_by_strategy, calculate_summary, calculate_system_status
+from db import ping_database
 from trades import enrich_trade_for_display, get_trade, list_trades
 
 
@@ -14,13 +16,16 @@ router = APIRouter()
 
 
 @router.get("/healthz")
-def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+def healthcheck() -> JSONResponse:
+    if ping_database():
+        return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "degraded"}, status_code=503)
 
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     summary = calculate_summary()
+    system_status = calculate_system_status()
     open_trades = sorted(
         summary["open_trades"],
         key=lambda trade: trade["unrealized_R"] if trade["unrealized_R"] is not None else -999,
@@ -34,6 +39,7 @@ def home(request: Request) -> HTMLResponse:
             "app_name": APP_NAME,
             "summary": summary,
             "open_trades": open_trades,
+            "system_status": system_status,
         },
     )
 

@@ -25,6 +25,10 @@
     .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
     .value { font-size: 28px; margin-top: 8px; font-weight: bold; }
     .panel { padding: 18px; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .status-item { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    .status-good { color: #0f766e; font-weight: bold; }
+    .status-bad { color: #b42318; font-weight: bold; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
     th { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
@@ -53,6 +57,50 @@
     </div>
 
     <div class="panel">
+      <h2>System Status</h2>
+      <div class="status-grid">
+        <div class="status-item">
+          <div class="label">Database</div>
+          <div class="{% if system_status.db_healthy %}status-good{% else %}status-bad{% endif %}">
+            {% if system_status.db_healthy %}Healthy{% else %}Unavailable{% endif %}
+          </div>
+        </div>
+        <div class="status-item">
+          <div class="label">Data Providers</div>
+          <div>Crypto: {{ system_status.crypto_provider }}</div>
+          <div>Stocks/ETFs: {{ system_status.equity_provider }}</div>
+        </div>
+        <div class="status-item">
+          <div class="label">Last Scan</div>
+          <div>{{ system_status.runtime.last_scan_at or "Not run yet" }}</div>
+          <div class="muted">
+            {% if system_status.runtime.last_scan_assets %}
+              {{ system_status.runtime.last_scan_assets | join(", ") }}
+            {% else %}
+              No assets scanned yet
+            {% endif %}
+          </div>
+        </div>
+        <div class="status-item">
+          <div class="label">Last Trade Update</div>
+          <div>{{ system_status.runtime.last_update_at or "Not run yet" }}</div>
+        </div>
+        <div class="status-item">
+          <div class="label">Supported Crypto</div>
+          <div>{{ system_status.supported_crypto_symbols | join(", ") }}</div>
+          <div class="muted">Hidden unsupported: {{ system_status.unsupported_crypto_symbols | join(", ") }}</div>
+        </div>
+        <div class="status-item">
+          <div class="label">Last Error</div>
+          {% if system_status.runtime.last_error %}
+          <div class="status-bad">{{ system_status.runtime.last_error.location }}</div>
+          <div class="muted">{{ system_status.runtime.last_error.message }}</div>
+          {% else %}
+          <div class="status-good">None</div>
+          {% endif %}
+        </div>
+      </div>
+
       <h2>Open Trades</h2>
       <table>
         <thead>
