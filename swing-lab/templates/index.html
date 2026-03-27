@@ -29,6 +29,8 @@
     .status-item { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
     .status-good { color: #0f766e; font-weight: bold; }
     .status-bad { color: #b42318; font-weight: bold; }
+    .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .version { margin-top: 12px; text-align: right; font-size: 13px; color: var(--muted); }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
     th { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
@@ -45,8 +47,16 @@
       <a href="/analytics">Analytics</a>
     </nav>
 
-    <h1>{{ app_name }}</h1>
-    <p class="muted">Automated swing-trading simulator for research and learning only.</p>
+    <div class="topbar">
+      <div>
+        <h1>{{ app_name }}</h1>
+        <p class="muted">Automated swing-trading simulator for research and learning only.</p>
+      </div>
+      <div class="version">
+        <div><strong>Version:</strong> {{ system_status.app_version }}</div>
+        <div><strong>Started:</strong> {{ system_status.runtime.started_at_display }}</div>
+      </div>
+    </div>
 
     <div class="cards">
       <div class="card"><div class="label">Total Trades</div><div class="value">{{ summary.total_trades }}</div></div>
@@ -72,7 +82,7 @@
         </div>
         <div class="status-item">
           <div class="label">Last Scan</div>
-          <div>{{ system_status.runtime.last_scan_at or "Not run yet" }}</div>
+          <div>{{ system_status.runtime.last_scan_at_display }}</div>
           <div class="muted">
             {% if system_status.runtime.last_scan_assets %}
               {{ system_status.runtime.last_scan_assets | join(", ") }}
@@ -80,10 +90,13 @@
               No assets scanned yet
             {% endif %}
           </div>
+          <div class="muted">
+            Candidates: {{ system_status.runtime.last_scan_candidates }} | Created: {{ system_status.runtime.last_scan_created }}
+          </div>
         </div>
         <div class="status-item">
           <div class="label">Last Trade Update</div>
-          <div>{{ system_status.runtime.last_update_at or "Not run yet" }}</div>
+          <div>{{ system_status.runtime.last_update_at_display }}</div>
         </div>
         <div class="status-item">
           <div class="label">Supported Crypto</div>
@@ -94,6 +107,7 @@
           <div class="label">Last Error</div>
           {% if system_status.runtime.last_error %}
           <div class="status-bad">{{ system_status.runtime.last_error.location }}</div>
+          <div class="muted">{{ system_status.runtime.last_error.at_display }}</div>
           <div class="muted">{{ system_status.runtime.last_error.message }}</div>
           {% else %}
           <div class="status-good">None</div>

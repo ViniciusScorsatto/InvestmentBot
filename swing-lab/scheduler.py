@@ -71,7 +71,7 @@ class SwingLabScheduler:
         candidates = generate_trade_candidates(asset_classes=asset_classes)
         remaining_slots = MAX_TRADES_PER_DAY - opened_today
         created = create_trades_from_candidates(candidates, limit=remaining_slots)
-        mark_scan(asset_classes)
+        mark_scan(asset_classes, candidates=len(candidates), created=len(created))
         LOGGER.info("Scan completed for %s, %s trades created", ",".join(asset_classes), len(created))
 
     def run_update_cycle(self, now_utc: datetime | None = None) -> None:

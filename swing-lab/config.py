@@ -12,6 +12,7 @@ APP_NAME = "Swing Lab Auto"
 APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
 
 MAX_TRADES_PER_DAY = 5
 PREFERRED_TOP_SETUPS = 3

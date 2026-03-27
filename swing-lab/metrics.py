@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
-from config import CRYPTO_SYMBOL_TO_KRAKEN_PAIR, UNSUPPORTED_CRYPTO_WATCHLIST
+from config import APP_VERSION, CRYPTO_SYMBOL_TO_KRAKEN_PAIR, UNSUPPORTED_CRYPTO_WATCHLIST
 from db import ping_database
 from runtime_status import get_status
 from trades import enrich_trade_for_display, list_trades
@@ -13,6 +14,16 @@ def _safe_pct(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
     return round((numerator / denominator) * 100, 2)
+
+
+def _format_timestamp(value: str | None) -> str:
+    if not value:
+        return "Not run yet"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return parsed.strftime("%b %d, %Y %H:%M UTC")
 
 
 def calculate_summary() -> dict[str, Any]:
@@ -79,11 +90,17 @@ def analytics_by_asset_class() -> list[dict[str, Any]]:
 
 def calculate_system_status() -> dict[str, Any]:
     runtime = get_status()
+    formatted_runtime = dict(runtime)
+    for key in ("started_at", "last_scan_at", "last_update_at", "last_summary_at"):
+        formatted_runtime[f"{key}_display"] = _format_timestamp(runtime.get(key))
+    if runtime.get("last_error"):
+        formatted_runtime["last_error"]["at_display"] = _format_timestamp(runtime["last_error"].get("at"))
     return {
         "db_healthy": ping_database(),
         "crypto_provider": "Kraken",
         "equity_provider": "Yahoo Finance",
         "supported_crypto_symbols": sorted(CRYPTO_SYMBOL_TO_KRAKEN_PAIR.keys()),
         "unsupported_crypto_symbols": UNSUPPORTED_CRYPTO_WATCHLIST,
-        "runtime": runtime,
+        "runtime": formatted_runtime,
+        "app_version": APP_VERSION[:8] if APP_VERSION != "local" else "local",
     }
