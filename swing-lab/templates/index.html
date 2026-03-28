@@ -31,6 +31,7 @@
     .status-bad { color: #b42318; font-weight: bold; }
     .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
     .version { margin-top: 12px; text-align: right; font-size: 13px; color: var(--muted); }
+    .status-warn { color: #9a6700; font-weight: bold; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); }
     th { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
@@ -114,6 +115,40 @@
           {% endif %}
         </div>
       </div>
+
+      <h2>Last Scan Diagnostics</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>4H Bars</th>
+            <th>1D Bars</th>
+            <th>Status</th>
+            <th>Qualified Setups</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in system_status.runtime.last_scan_diagnostics %}
+          <tr>
+            <td>{{ item.asset }}</td>
+            <td>{{ item.four_hour_bars }}</td>
+            <td>{{ item.daily_bars }}</td>
+            <td>
+              <span class="
+                {% if item.status == 'candidate_found' %}status-good
+                {% elif item.status in ['filtered_by_threshold', 'insufficient_timeframe_history', 'insufficient_daily_history'] %}status-warn
+                {% else %}muted{% endif %}
+              ">{{ item.status }}</span>
+            </td>
+            <td>{{ item.qualified_setups }}</td>
+            <td>{{ item.note }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="muted">No scan diagnostics yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
 
       <h2>Open Trades</h2>
       <table>

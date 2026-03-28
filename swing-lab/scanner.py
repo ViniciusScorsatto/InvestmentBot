@@ -209,8 +209,9 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
         return json.loads(default_cached_dataset())
 
 
-def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
+def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     candidates: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     for asset_class, symbols in WATCHLIST.items():
         if asset_class not in enabled_asset_classes:
@@ -218,19 +219,65 @@ def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[di
         for asset in symbols:
             dataset = fetch_asset_data(asset, asset_class)
             daily_bars = dataset["1d"]
+            four_hour_bars = dataset["4h"]
+            asset_candidates = 0
+            below_threshold = 0
+            status = "ok"
+            note = "No setup matched"
+
             if len(daily_bars) < 60:
+                diagnostics.append(
+                    {
+                        "asset": asset,
+                        "asset_class": asset_class,
+                        "daily_bars": len(daily_bars),
+                        "four_hour_bars": len(four_hour_bars),
+                        "status": "insufficient_daily_history",
+                        "note": "Need at least 60 daily bars",
+                        "qualified_setups": 0,
+                    }
+                )
                 continue
             alignment = detect_market_alignment(daily_bars)
             for timeframe in ("4h", "1d"):
                 bars = dataset[timeframe]
                 if len(bars) < 60:
+                    status = "insufficient_timeframe_history"
+                    note = f"{timeframe} needs at least 60 bars"
                     continue
                 for evaluator in (evaluate_trend_pullback, evaluate_breakout):
                     trade = evaluator(bars, asset, asset_class, timeframe, alignment)
-                    if trade and trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE:
+                    if not trade:
+                        continue
+                    if trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE:
                         candidates.append(trade)
+                        asset_candidates += 1
+                        status = "candidate_found"
+                        note = "At least one setup qualified"
+                    else:
+                        below_threshold += 1
+                        if asset_candidates == 0:
+                            status = "filtered_by_threshold"
+                            note = "Pattern matched but score/R filter removed it"
+            diagnostics.append(
+                {
+                    "asset": asset,
+                    "asset_class": asset_class,
+                    "daily_bars": len(daily_bars),
+                    "four_hour_bars": len(four_hour_bars),
+                    "status": status,
+                    "note": note,
+                    "qualified_setups": asset_candidates,
+                    "below_threshold": below_threshold,
+                }
+            )
     candidates.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
-    return candidates[:MAX_TRADES_PER_DAY]
+    return candidates[:MAX_TRADES_PER_DAY], diagnostics
+
+
+def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
+    candidates, _ = scan_market(asset_classes=asset_classes)
+    return candidates
 
 
 def select_best_setups(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

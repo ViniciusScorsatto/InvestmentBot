@@ -19,7 +19,7 @@ from config import (
 )
 from metrics import calculate_summary
 from runtime_status import mark_error, mark_scan, mark_started, mark_summary, mark_update
-from scanner import generate_trade_candidates
+from scanner import scan_market
 from telegram import notify_daily_summary
 from trades import create_trades_from_candidates, trades_opened_today, update_open_trades
 
@@ -68,11 +68,16 @@ class SwingLabScheduler:
         asset_classes = ["crypto"]
         if self._is_us_market_open(now_utc):
             asset_classes.extend(["stock", "etf"])
-        candidates = generate_trade_candidates(asset_classes=asset_classes)
+        candidates, diagnostics = scan_market(asset_classes=asset_classes)
         remaining_slots = MAX_TRADES_PER_DAY - opened_today
         created = create_trades_from_candidates(candidates, limit=remaining_slots)
-        mark_scan(asset_classes, candidates=len(candidates), created=len(created))
-        LOGGER.info("Scan completed for %s, %s trades created", ",".join(asset_classes), len(created))
+        mark_scan(asset_classes, candidates=len(candidates), created=len(created), diagnostics=diagnostics)
+        LOGGER.info(
+            "Scan completed for %s, %s candidates found, %s trades created",
+            ",".join(asset_classes),
+            len(candidates),
+            len(created),
+        )
 
     def run_update_cycle(self, now_utc: datetime | None = None) -> None:
         now_utc = now_utc or datetime.now(tz=timezone.utc)
