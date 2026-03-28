@@ -29,8 +29,8 @@ LOGGER = logging.getLogger(__name__)
 _LAST_CRYPTO_REQUEST_AT: datetime | None = None
 
 
-def _to_iso(timestamp: int) -> str:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+def _to_iso(timestamp: int | float | str) -> str:
+    return datetime.fromtimestamp(int(float(timestamp)), tz=timezone.utc).isoformat()
 
 
 def _aggregate_bars(bars: list[dict[str, Any]], group_size: int) -> list[dict[str, Any]]:
@@ -191,7 +191,7 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
     try:
         if asset_class == "crypto":
             hourly = _fetch_kraken_chart(asset, interval_minutes=60)
-            daily = _aggregate_bars(hourly, 24)
+            daily = _fetch_kraken_chart(asset, interval_minutes=1440)
             four_hour = _aggregate_bars(hourly, 4)
         else:
             hourly = _fetch_yahoo_chart(asset, interval="1h", range_value="6mo")
