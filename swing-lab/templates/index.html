@@ -94,6 +94,12 @@
           <div class="muted">
             Candidates: {{ system_status.runtime.last_scan_candidates }} | Created: {{ system_status.runtime.last_scan_created }}
           </div>
+          <div class="muted">
+            No pattern: {{ system_status.runtime.last_scan_rejections.no_pattern_match }} |
+            Score only: {{ system_status.runtime.last_scan_rejections.filtered_by_score }} |
+            R only: {{ system_status.runtime.last_scan_rejections.filtered_by_r }} |
+            Both: {{ system_status.runtime.last_scan_rejections.filtered_by_score_and_r }}
+          </div>
         </div>
         <div class="status-item">
           <div class="label">Last Trade Update</div>
@@ -124,6 +130,7 @@
             <th>4H Bars</th>
             <th>1D Bars</th>
             <th>Status</th>
+            <th>Matched Patterns</th>
             <th>Qualified Setups</th>
             <th>Note</th>
           </tr>
@@ -141,11 +148,44 @@
                 {% else %}muted{% endif %}
               ">{{ item.status }}</span>
             </td>
+            <td>{{ item.matched_patterns }}</td>
             <td>{{ item.qualified_setups }}</td>
             <td>{{ item.note }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="muted">No scan diagnostics yet.</td></tr>
+          <tr><td colspan="7" class="muted">No scan diagnostics yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h2>Near Misses</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>Strategy</th>
+            <th>Timeframe</th>
+            <th>Score</th>
+            <th>R</th>
+            <th>Entry</th>
+            <th>Target</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in system_status.runtime.last_scan_near_misses %}
+          <tr>
+            <td>{{ item.asset }}</td>
+            <td>{{ item.strategy }}</td>
+            <td>{{ item.timeframe }}</td>
+            <td>{{ item.score }}</td>
+            <td>{{ item.R_multiple }}</td>
+            <td>{{ item.entry_price }}</td>
+            <td>{{ item.target_price }}</td>
+            <td>{{ item.note }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="muted">No near misses in the last scan.</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -15,6 +15,13 @@ _STATUS: dict[str, Any] = {
     "last_scan_candidates": 0,
     "last_scan_created": 0,
     "last_scan_diagnostics": [],
+    "last_scan_near_misses": [],
+    "last_scan_rejections": {
+        "no_pattern_match": 0,
+        "filtered_by_score": 0,
+        "filtered_by_r": 0,
+        "filtered_by_score_and_r": 0,
+    },
     "last_error": None,
 }
 
@@ -28,13 +35,22 @@ def mark_started() -> None:
         _STATUS["started_at"] = _now_iso()
 
 
-def mark_scan(asset_classes: list[str], candidates: int, created: int, diagnostics: list[dict[str, Any]]) -> None:
+def mark_scan(
+    asset_classes: list[str],
+    candidates: int,
+    created: int,
+    diagnostics: list[dict[str, Any]],
+    near_misses: list[dict[str, Any]],
+    rejections: dict[str, int],
+) -> None:
     with _LOCK:
         _STATUS["last_scan_at"] = _now_iso()
         _STATUS["last_scan_assets"] = list(asset_classes)
         _STATUS["last_scan_candidates"] = candidates
         _STATUS["last_scan_created"] = created
         _STATUS["last_scan_diagnostics"] = list(diagnostics)
+        _STATUS["last_scan_near_misses"] = list(near_misses)
+        _STATUS["last_scan_rejections"] = dict(rejections)
 
 
 def mark_update() -> None:
@@ -61,5 +77,7 @@ def get_status() -> dict[str, Any]:
         status = dict(_STATUS)
         status["last_scan_assets"] = list(_STATUS["last_scan_assets"])
         status["last_scan_diagnostics"] = list(_STATUS["last_scan_diagnostics"])
+        status["last_scan_near_misses"] = list(_STATUS["last_scan_near_misses"])
+        status["last_scan_rejections"] = dict(_STATUS["last_scan_rejections"])
         status["last_error"] = dict(_STATUS["last_error"]) if _STATUS["last_error"] else None
         return status

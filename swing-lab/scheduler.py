@@ -68,10 +68,17 @@ class SwingLabScheduler:
         asset_classes = ["crypto"]
         if self._is_us_market_open(now_utc):
             asset_classes.extend(["stock", "etf"])
-        candidates, diagnostics = scan_market(asset_classes=asset_classes)
+        candidates, diagnostics, near_misses, rejection_counts = scan_market(asset_classes=asset_classes)
         remaining_slots = MAX_TRADES_PER_DAY - opened_today
         created = create_trades_from_candidates(candidates, limit=remaining_slots)
-        mark_scan(asset_classes, candidates=len(candidates), created=len(created), diagnostics=diagnostics)
+        mark_scan(
+            asset_classes,
+            candidates=len(candidates),
+            created=len(created),
+            diagnostics=diagnostics,
+            near_misses=near_misses,
+            rejections=rejection_counts,
+        )
         LOGGER.info(
             "Scan completed for %s, %s candidates found, %s trades created",
             ",".join(asset_classes),

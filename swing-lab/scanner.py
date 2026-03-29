@@ -209,9 +209,18 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
         return json.loads(default_cached_dataset())
 
 
-def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def scan_market(
+    asset_classes: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     candidates: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
+    near_misses: list[dict[str, Any]] = []
+    rejection_counts = {
+        "no_pattern_match": 0,
+        "filtered_by_score": 0,
+        "filtered_by_r": 0,
+        "filtered_by_score_and_r": 0,
+    }
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     for asset_class, symbols in WATCHLIST.items():
         if asset_class not in enabled_asset_classes:
@@ -222,6 +231,7 @@ def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, 
             four_hour_bars = dataset["4h"]
             asset_candidates = 0
             below_threshold = 0
+            matched_patterns = 0
             status = "ok"
             note = "No setup matched"
 
@@ -249,6 +259,9 @@ def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, 
                     trade = evaluator(bars, asset, asset_class, timeframe, alignment)
                     if not trade:
                         continue
+                    matched_patterns += 1
+                    score_ok = trade["score"] >= MIN_SCORE
+                    r_ok = trade["R_multiple"] >= MIN_R_MULTIPLE
                     if trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE:
                         candidates.append(trade)
                         asset_candidates += 1
@@ -259,6 +272,27 @@ def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, 
                         if asset_candidates == 0:
                             status = "filtered_by_threshold"
                             note = "Pattern matched but score/R filter removed it"
+                        if not score_ok and not r_ok:
+                            rejection_counts["filtered_by_score_and_r"] += 1
+                        elif not score_ok:
+                            rejection_counts["filtered_by_score"] += 1
+                        elif not r_ok:
+                            rejection_counts["filtered_by_r"] += 1
+                        near_misses.append(
+                            {
+                                "asset": asset,
+                                "asset_class": asset_class,
+                                "strategy": trade["strategy"],
+                                "timeframe": trade["timeframe"],
+                                "score": trade["score"],
+                                "R_multiple": trade["R_multiple"],
+                                "entry_price": trade["entry_price"],
+                                "target_price": trade["target_price"],
+                                "note": "Rejected by score and/or R filter",
+                            }
+                        )
+            if matched_patterns == 0:
+                rejection_counts["no_pattern_match"] += 1
             diagnostics.append(
                 {
                     "asset": asset,
@@ -269,14 +303,16 @@ def scan_market(asset_classes: list[str] | None = None) -> tuple[list[dict[str, 
                     "note": note,
                     "qualified_setups": asset_candidates,
                     "below_threshold": below_threshold,
+                    "matched_patterns": matched_patterns,
                 }
             )
     candidates.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
-    return candidates[:MAX_TRADES_PER_DAY], diagnostics
+    near_misses.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
+    return candidates[:MAX_TRADES_PER_DAY], diagnostics, near_misses[:10], rejection_counts
 
 
 def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
-    candidates, _ = scan_market(asset_classes=asset_classes)
+    candidates, _, _, _ = scan_market(asset_classes=asset_classes)
     return candidates
 
 
