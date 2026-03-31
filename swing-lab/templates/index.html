@@ -100,6 +100,14 @@
             R only: {{ system_status.runtime.last_scan_rejections.filtered_by_r }} |
             Both: {{ system_status.runtime.last_scan_rejections.filtered_by_score_and_r }}
           </div>
+          <div class="muted">
+            Top blockers:
+            {% for key, value in system_status.runtime.last_scan_rejections.rule_failures.items() %}
+              {{ key }}={{ value }}{% if not loop.last %}, {% endif %}
+            {% else %}
+              none
+            {% endfor %}
+          </div>
         </div>
         <div class="status-item">
           <div class="label">Last Trade Update</div>
@@ -131,6 +139,7 @@
             <th>1D Bars</th>
             <th>Status</th>
             <th>Matched Patterns</th>
+            <th>Top Failure</th>
             <th>Qualified Setups</th>
             <th>Note</th>
           </tr>
@@ -149,11 +158,12 @@
               ">{{ item.status }}</span>
             </td>
             <td>{{ item.matched_patterns }}</td>
+            <td>{{ item.top_failure }}</td>
             <td>{{ item.qualified_setups }}</td>
             <td>{{ item.note }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="muted">No scan diagnostics yet.</td></tr>
+          <tr><td colspan="8" class="muted">No scan diagnostics yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

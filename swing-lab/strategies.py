@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 
@@ -76,6 +77,10 @@ def detect_market_alignment(daily_bars: list[dict[str, Any]]) -> int:
     return min(score, 20)
 
 
+def empty_debug_counter() -> Counter[str]:
+    return Counter()
+
+
 def _score_components(
     price: float,
     ema20: float,
@@ -118,9 +123,16 @@ def _score_components(
 
 
 def evaluate_trend_pullback(
-    bars: list[dict[str, Any]], asset: str, asset_class: str, timeframe: str, market_alignment: int
+    bars: list[dict[str, Any]],
+    asset: str,
+    asset_class: str,
+    timeframe: str,
+    market_alignment: int,
+    debug_counter: Counter[str] | None = None,
 ) -> dict[str, Any] | None:
     if len(bars) < 60:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_insufficient_bars"] += 1
         return None
 
     closes = [bar["close"] for bar in bars]
@@ -136,15 +148,33 @@ def evaluate_trend_pullback(
     rsi_value = rsi_series[-1]
     recent_low = min(lows[-5:])
 
+    price_above_ema50 = price > ema50_value
+    ema_stack_ok = ema20_value > ema50_value
     near_ema20 = abs(price - ema20_value) / price <= 0.02
     valid_rsi = rsi_value is not None and 40 <= rsi_value <= 55
 
-    if not (price > ema50_value and ema20_value > ema50_value and near_ema20 and valid_rsi):
+    if not price_above_ema50:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_price_below_ema50"] += 1
+        return None
+    if not ema_stack_ok:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_ema_stack_failed"] += 1
+        return None
+    if not near_ema20:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_not_near_ema20"] += 1
+        return None
+    if not valid_rsi:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_rsi_out_of_range"] += 1
         return None
 
     stop = recent_low
     risk = price - stop
     if risk <= 0:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_invalid_risk"] += 1
         return None
     target = price + (2 * risk)
 
@@ -175,9 +205,16 @@ def evaluate_trend_pullback(
 
 
 def evaluate_breakout(
-    bars: list[dict[str, Any]], asset: str, asset_class: str, timeframe: str, market_alignment: int
+    bars: list[dict[str, Any]],
+    asset: str,
+    asset_class: str,
+    timeframe: str,
+    market_alignment: int,
+    debug_counter: Counter[str] | None = None,
 ) -> dict[str, Any] | None:
     if len(bars) < 60:
+        if debug_counter is not None:
+            debug_counter["breakout_insufficient_bars"] += 1
         return None
 
     closes = [bar["close"] for bar in bars]
@@ -194,13 +231,27 @@ def evaluate_breakout(
     recent_low = min(lows[-5:])
     avg_volume = avg_volume_series[-1] or volumes[-1]
     breakout = price > prior_20_high
+    volume_above_average = volumes[-1] > avg_volume
+    price_above_ema50 = price > ema50_series[-1]
 
-    if not (breakout and volumes[-1] > avg_volume and price > ema50_series[-1]):
+    if not breakout:
+        if debug_counter is not None:
+            debug_counter["breakout_not_above_20_high"] += 1
+        return None
+    if not volume_above_average:
+        if debug_counter is not None:
+            debug_counter["breakout_volume_below_average"] += 1
+        return None
+    if not price_above_ema50:
+        if debug_counter is not None:
+            debug_counter["breakout_price_below_ema50"] += 1
         return None
 
     stop = min(prior_20_high * 0.985, recent_low)
     risk = price - stop
     if risk <= 0:
+        if debug_counter is not None:
+            debug_counter["breakout_invalid_risk"] += 1
         return None
     target = price + (2.5 * risk)
 

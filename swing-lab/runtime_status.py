@@ -21,6 +21,7 @@ _STATUS: dict[str, Any] = {
         "filtered_by_score": 0,
         "filtered_by_r": 0,
         "filtered_by_score_and_r": 0,
+        "rule_failures": {},
     },
     "last_error": None,
 }

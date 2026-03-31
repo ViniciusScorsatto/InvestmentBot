@@ -22,7 +22,7 @@ from config import (
     default_cached_dataset,
 )
 from db import execute, fetch_one
-from strategies import detect_market_alignment, evaluate_breakout, evaluate_trend_pullback
+from strategies import detect_market_alignment, empty_debug_counter, evaluate_breakout, evaluate_trend_pullback
 
 
 LOGGER = logging.getLogger(__name__)
@@ -221,6 +221,7 @@ def scan_market(
         "filtered_by_r": 0,
         "filtered_by_score_and_r": 0,
     }
+    rule_failures: dict[str, int] = {}
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     for asset_class, symbols in WATCHLIST.items():
         if asset_class not in enabled_asset_classes:
@@ -232,6 +233,7 @@ def scan_market(
             asset_candidates = 0
             below_threshold = 0
             matched_patterns = 0
+            asset_rule_failures = empty_debug_counter()
             status = "ok"
             note = "No setup matched"
 
@@ -256,7 +258,7 @@ def scan_market(
                     note = f"{timeframe} needs at least 60 bars"
                     continue
                 for evaluator in (evaluate_trend_pullback, evaluate_breakout):
-                    trade = evaluator(bars, asset, asset_class, timeframe, alignment)
+                    trade = evaluator(bars, asset, asset_class, timeframe, alignment, debug_counter=asset_rule_failures)
                     if not trade:
                         continue
                     matched_patterns += 1
@@ -293,6 +295,8 @@ def scan_market(
                         )
             if matched_patterns == 0:
                 rejection_counts["no_pattern_match"] += 1
+            for key, value in asset_rule_failures.items():
+                rule_failures[key] = rule_failures.get(key, 0) + value
             diagnostics.append(
                 {
                     "asset": asset,
@@ -304,11 +308,12 @@ def scan_market(
                     "qualified_setups": asset_candidates,
                     "below_threshold": below_threshold,
                     "matched_patterns": matched_patterns,
+                    "top_failure": asset_rule_failures.most_common(1)[0][0] if asset_rule_failures else "none",
                 }
             )
     candidates.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
     near_misses.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
-    return candidates[:MAX_TRADES_PER_DAY], diagnostics, near_misses[:10], rejection_counts
+    return candidates[:MAX_TRADES_PER_DAY], diagnostics, near_misses[:10], rejection_counts | {"rule_failures": rule_failures}
 
 
 def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
