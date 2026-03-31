@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from config import (
     DAILY_SUMMARY_HOUR,
     MAX_TRADES_PER_DAY,
+    MARKET_DATA_CACHE_RETENTION_DAYS,
     SCAN_INTERVAL_HOURS,
     UPDATE_INTERVAL_MINUTES,
     US_MARKET_CLOSE_HOUR,
@@ -17,6 +18,7 @@ from config import (
     US_MARKET_OPEN_MINUTE,
     US_MARKET_TIMEZONE,
 )
+from db import purge_old_market_cache
 from metrics import calculate_summary
 from runtime_status import mark_error, mark_scan, mark_started, mark_summary, mark_update
 from scanner import scan_market
@@ -35,6 +37,7 @@ class SwingLabScheduler:
         self._last_scan_hour: tuple[int, int] | None = None
         self._last_update_marker: tuple[int, int, int, int] | None = None
         self._last_summary_date: str | None = None
+        self._last_cache_cleanup_date: str | None = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -102,6 +105,14 @@ class SwingLabScheduler:
         mark_summary()
         LOGGER.info("Daily summary sent")
 
+    def run_cache_cleanup(self) -> None:
+        deleted = purge_old_market_cache()
+        LOGGER.info(
+            "Cache cleanup completed, removed %s market cache rows older than %s days",
+            deleted,
+            MARKET_DATA_CACHE_RETENTION_DAYS,
+        )
+
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
@@ -122,6 +133,10 @@ class SwingLabScheduler:
                 if now.hour >= DAILY_SUMMARY_HOUR and self._last_summary_date != date_key:
                     self.run_daily_summary()
                     self._last_summary_date = date_key
+
+                if self._last_cache_cleanup_date != date_key:
+                    self.run_cache_cleanup()
+                    self._last_cache_cleanup_date = date_key
             except Exception as exc:
                 mark_error("scheduler_loop", exc)
                 LOGGER.exception("Scheduler loop failed: %s", exc)

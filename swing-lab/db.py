@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 import psycopg
 from psycopg.rows import dict_row
 
-from config import DATABASE_URL
+from config import DATABASE_URL, MARKET_DATA_CACHE_RETENTION_DAYS
 
 
 def _require_database_url() -> str:
@@ -107,3 +108,16 @@ def execute(query: str, params: tuple[Any, ...] = ()) -> int | None:
             if row and "id" in row:
                 return int(row["id"])
         return None
+
+
+def purge_old_market_cache(retention_days: int = MARKET_DATA_CACHE_RETENTION_DAYS) -> int:
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=retention_days)
+    with get_db() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM market_data_cache
+            WHERE fetched_at < %s
+            """,
+            (cutoff,),
+        )
+        return cursor.rowcount
