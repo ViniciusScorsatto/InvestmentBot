@@ -22,7 +22,15 @@ from config import (
     default_cached_dataset,
 )
 from db import execute, fetch_one
-from strategies import detect_market_alignment, empty_debug_counter, evaluate_breakout, evaluate_trend_pullback
+from strategies import (
+    detect_bearish_market_alignment,
+    detect_market_alignment,
+    empty_debug_counter,
+    evaluate_bearish_pullback,
+    evaluate_breakdown,
+    evaluate_breakout,
+    evaluate_trend_pullback,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -251,14 +259,28 @@ def scan_market(
                 )
                 continue
             alignment = detect_market_alignment(daily_bars)
+            bearish_alignment = detect_bearish_market_alignment(daily_bars)
             for timeframe in ("4h", "1d"):
                 bars = dataset[timeframe]
                 if len(bars) < 60:
                     status = "insufficient_timeframe_history"
                     note = f"{timeframe} needs at least 60 bars"
                     continue
-                for evaluator in (evaluate_trend_pullback, evaluate_breakout):
-                    trade = evaluator(bars, asset, asset_class, timeframe, alignment, debug_counter=asset_rule_failures)
+                evaluators = (
+                    (evaluate_trend_pullback, alignment),
+                    (evaluate_breakout, alignment),
+                    (evaluate_bearish_pullback, bearish_alignment),
+                    (evaluate_breakdown, bearish_alignment),
+                )
+                for evaluator, market_score in evaluators:
+                    trade = evaluator(
+                        bars,
+                        asset,
+                        asset_class,
+                        timeframe,
+                        market_score,
+                        debug_counter=asset_rule_failures,
+                    )
                     if not trade:
                         continue
                     matched_patterns += 1
