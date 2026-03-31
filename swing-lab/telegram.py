@@ -5,6 +5,7 @@ import logging
 import requests
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from trade_utils import get_trade_direction
 
 
 LOGGER = logging.getLogger(__name__)
@@ -29,12 +30,14 @@ def send_message(text: str) -> bool:
 
 
 def notify_new_trade(trade: dict) -> None:
+    direction = get_trade_direction(trade["strategy"])
     send_message(
         "\n".join(
             [
                 "🚀 NEW TRADE",
                 "",
                 f"Asset: {trade['asset']}",
+                f"Direction: {direction}",
                 f"Strategy: {trade['strategy']}",
                 f"Timeframe: {trade['timeframe']}",
                 f"Score: {trade['score']}",
@@ -50,12 +53,14 @@ def notify_new_trade(trade: dict) -> None:
 
 def notify_trade_closed(trade: dict, status: str, result_r: float) -> None:
     label = {"stopped": "Stop Loss", "target_hit": "Target Hit", "closed": "Timed Exit"}.get(status, status)
+    direction = get_trade_direction(trade["strategy"])
     send_message(
         "\n".join(
             [
                 "❌ TRADE CLOSED",
                 "",
                 f"Asset: {trade['asset']}",
+                f"Direction: {direction}",
                 f"Result: {label}",
                 f"R: {round(result_r, 2)}",
             ]

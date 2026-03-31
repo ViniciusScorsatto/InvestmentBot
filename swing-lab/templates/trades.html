@@ -39,6 +39,7 @@
         <thead>
           <tr>
             <th>Asset</th>
+            <th>Direction</th>
             <th>Strategy</th>
             <th>Entry</th>
             <th>Stop</th>
@@ -51,6 +52,7 @@
           {% for trade in trades %}
           <tr>
             <td><a href="/trades/{{ trade.id }}">{{ trade.asset }}</a></td>
+            <td>{{ trade.direction }}</td>
             <td>{{ trade.strategy }}</td>
             <td>{{ trade.entry_price }}</td>
             <td>{{ trade.stop_loss }}</td>
@@ -59,7 +61,7 @@
             <td>{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="7">No trades found.</td></tr>
+          <tr><td colspan="8">No trades found.</td></tr>
           {% endfor %}
         </tbody>
       </table>

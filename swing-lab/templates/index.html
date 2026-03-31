@@ -205,6 +205,7 @@
         <thead>
           <tr>
             <th>Asset</th>
+            <th>Direction</th>
             <th>Strategy</th>
             <th>Entry</th>
             <th>Current Price</th>
@@ -216,6 +217,7 @@
           {% for trade in open_trades %}
           <tr class="{% if trade.unrealized_R is not none and trade.unrealized_R >= 0 %}positive{% elif trade.unrealized_R is not none %}negative{% endif %}">
             <td><a href="/trades/{{ trade.id }}">{{ trade.asset }}</a></td>
+            <td>{{ trade.direction }}</td>
             <td>{{ trade.strategy }}</td>
             <td>{{ trade.entry_price }}</td>
             <td>{{ trade.current_price or "-" }}</td>
@@ -223,7 +225,7 @@
             <td>{{ trade.days_open }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="muted">No open trades yet.</td></tr>
+          <tr><td colspan="7" class="muted">No open trades yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

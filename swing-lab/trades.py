@@ -9,6 +9,7 @@ from config import MAX_TRADE_DURATION_DAYS
 from db import execute, fetch_all, fetch_one
 from scanner import fetch_asset_data, select_best_setups
 from telegram import notify_trade_closed, notify_new_trade
+from trade_utils import get_trade_direction
 
 
 LOGGER = logging.getLogger(__name__)
@@ -158,33 +159,54 @@ def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str,
             continue
 
         execute("UPDATE trades SET current_price = %s WHERE id = %s", (current_price, trade["id"]))
-        risk = trade["entry_price"] - trade["stop_loss"]
+        direction = get_trade_direction(trade["strategy"])
+        if direction == "Long":
+            risk = trade["entry_price"] - trade["stop_loss"]
+        else:
+            risk = trade["stop_loss"] - trade["entry_price"]
         if risk <= 0:
             continue
 
         days_open = (_now_utc() - _coerce_datetime(trade["date_opened"])).days
-        if current_price <= trade["stop_loss"]:
-            _close_trade(trade, "stopped", current_price, -1.0)
-        elif current_price >= trade["target_price"]:
-            result_r = (trade["target_price"] - trade["entry_price"]) / risk
-            _close_trade(trade, "target_hit", current_price, result_r)
-        elif days_open >= MAX_TRADE_DURATION_DAYS:
-            result_r = (current_price - trade["entry_price"]) / risk
-            _close_trade(trade, "closed", current_price, result_r)
+        if direction == "Long":
+            if current_price <= trade["stop_loss"]:
+                _close_trade(trade, "stopped", current_price, -1.0)
+            elif current_price >= trade["target_price"]:
+                result_r = (trade["target_price"] - trade["entry_price"]) / risk
+                _close_trade(trade, "target_hit", current_price, result_r)
+            elif days_open >= MAX_TRADE_DURATION_DAYS:
+                result_r = (current_price - trade["entry_price"]) / risk
+                _close_trade(trade, "closed", current_price, result_r)
+        else:
+            if current_price >= trade["stop_loss"]:
+                _close_trade(trade, "stopped", current_price, -1.0)
+            elif current_price <= trade["target_price"]:
+                result_r = (trade["entry_price"] - trade["target_price"]) / risk
+                _close_trade(trade, "target_hit", current_price, result_r)
+            elif days_open >= MAX_TRADE_DURATION_DAYS:
+                result_r = (trade["entry_price"] - current_price) / risk
+                _close_trade(trade, "closed", current_price, result_r)
         updated.append(get_trade(trade["id"]) or trade)
     return updated
 
 
 def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
     current_price = trade.get("current_price")
-    risk = trade["entry_price"] - trade["stop_loss"]
+    direction = get_trade_direction(trade["strategy"])
+    if direction == "Long":
+        risk = trade["entry_price"] - trade["stop_loss"]
+        pnl = current_price - trade["entry_price"] if current_price is not None else None
+    else:
+        risk = trade["stop_loss"] - trade["entry_price"]
+        pnl = trade["entry_price"] - current_price if current_price is not None else None
     if current_price is None or risk <= 0:
         return None
-    return round((current_price - trade["entry_price"]) / risk, 2)
+    return round(pnl / risk, 2)
 
 
 def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
     display = dict(trade)
+    display["direction"] = get_trade_direction(trade["strategy"])
     display["unrealized_R"] = compute_unrealized_r(trade)
     opened_at = _coerce_datetime(trade["date_opened"])
     display["days_open"] = (_now_utc() - opened_at).days
