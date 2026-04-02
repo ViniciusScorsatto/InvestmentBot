@@ -51,6 +51,7 @@
             <th>Status</th>
             <th>Outcome</th>
             <th>Result R</th>
+            <th>P/L ($100)</th>
           </tr>
         </thead>
         <tbody>
@@ -65,9 +66,10 @@
             <td>{{ trade.status_label }}</td>
             <td><span class="badge {{ trade.result_tone }}">{{ trade.result_label }}</span></td>
             <td class="{{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
+            <td class="{{ trade.result_tone }}">{{ trade.pnl_usd_100_label }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="9">No trades found.</td></tr>
+          <tr><td colspan="10">No trades found.</td></tr>
           {% endfor %}
         </tbody>
       </table>

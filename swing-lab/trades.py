@@ -20,6 +20,7 @@ STATUS_LABELS = {
     "target_hit": "Target Hit",
     "closed": "Timed Exit",
 }
+DISPLAY_NOTIONAL_USD = 100.0
 
 
 def _now_utc() -> datetime:
@@ -211,6 +212,20 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
     return round(pnl / risk, 2)
 
 
+def compute_notional_pnl_usd(trade: dict[str, Any], notional_usd: float = DISPLAY_NOTIONAL_USD) -> float | None:
+    current_price = trade.get("current_price")
+    entry_price = trade.get("entry_price")
+    if current_price is None or entry_price in (None, 0):
+        return None
+
+    direction = get_trade_direction(trade["strategy"])
+    if direction == "Long":
+        pnl_fraction = (current_price - entry_price) / entry_price
+    else:
+        pnl_fraction = (entry_price - current_price) / entry_price
+    return round(notional_usd * pnl_fraction, 2)
+
+
 def _result_label(result_r: float | None, status: str) -> str:
     if status == "open":
         return "Open"
@@ -249,6 +264,8 @@ def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
     display = dict(trade)
     display["direction"] = get_trade_direction(trade["strategy"])
     display["unrealized_R"] = compute_unrealized_r(trade)
+    display["pnl_usd_100"] = compute_notional_pnl_usd(trade)
+    display["pnl_usd_100_label"] = f"{display['pnl_usd_100']:+.2f}" if display["pnl_usd_100"] is not None else "-"
     display["status_label"] = STATUS_LABELS.get(trade["status"], trade["status"].replace("_", " ").title())
     result_r = trade.get("result_R")
     display["result_label"] = _result_label(result_r, trade["status"])
