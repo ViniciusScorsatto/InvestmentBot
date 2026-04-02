@@ -10,6 +10,7 @@ from api import router
 from config import APP_HOST, APP_NAME, APP_PORT, DATABASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from db import initialize_db
 from scheduler import SwingLabScheduler
+from trades import backfill_missing_trade_results
 
 
 logging.basicConfig(
@@ -23,6 +24,7 @@ scheduler = SwingLabScheduler()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_db()
+    backfill_missing_trade_results()
     logging.getLogger(__name__).info(
         "Starting %s on database=%s telegram_configured=%s",
         APP_NAME,
@@ -42,4 +44,5 @@ app.include_router(router)
 
 if __name__ == "__main__":
     initialize_db()
+    backfill_missing_trade_results()
     uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=False)

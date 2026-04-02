@@ -159,6 +159,37 @@ def _close_trade(trade: dict[str, Any], status: str, current_price: float, resul
     LOGGER.info("Closed trade %s with status %s", trade["id"], status)
 
 
+def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
+    current_price = trade.get("current_price")
+    entry_price = trade.get("entry_price")
+    stop_loss = trade.get("stop_loss")
+    target_price = trade.get("target_price")
+    status = trade.get("status")
+    direction = get_trade_direction(trade["strategy"])
+
+    if None in (entry_price, stop_loss):
+        return None
+
+    if direction == "Long":
+        risk = entry_price - stop_loss
+    else:
+        risk = stop_loss - entry_price
+    if risk <= 0:
+        return None
+
+    if status == "stopped":
+        return -1.0
+    if status == "target_hit" and target_price is not None:
+        if direction == "Long":
+            return round((target_price - entry_price) / risk, 2)
+        return round((entry_price - target_price) / risk, 2)
+    if status == "closed" and current_price is not None:
+        if direction == "Long":
+            return round((current_price - entry_price) / risk, 2)
+        return round((entry_price - current_price) / risk, 2)
+    return None
+
+
 def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
     updated: list[dict[str, Any]] = []
     for trade in list_trades(status="open", asset_classes=asset_classes):
@@ -282,3 +313,30 @@ def trades_opened_today() -> int:
         (day_start,),
     )
     return int(row["total"]) if row else 0
+
+
+def backfill_missing_trade_results() -> int:
+    updated = 0
+    legacy_closed = fetch_all(
+        """
+        SELECT * FROM trades
+        WHERE status != 'open' AND result_R IS NULL
+        ORDER BY id ASC
+        """
+    )
+    for trade in (_row_to_trade(row) for row in legacy_closed):
+        result_r = _compute_result_r_for_trade(trade)
+        if result_r is None:
+            continue
+        execute(
+            """
+            UPDATE trades
+            SET result_R = %s
+            WHERE id = %s
+            """,
+            (result_r, trade["id"]),
+        )
+        updated += 1
+    if updated:
+        LOGGER.info("Backfilled result_R for %s legacy closed trades", updated)
+    return updated
