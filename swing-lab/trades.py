@@ -212,8 +212,16 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
 
 
 def _result_label(result_r: float | None, status: str) -> str:
-    if status == "open" or result_r is None:
+    if status == "open":
         return "Open"
+    if result_r is None:
+        if status == "target_hit":
+            return "Win"
+        if status == "stopped":
+            return "Loss"
+        if status == "closed":
+            return "Flat"
+        return "Closed"
     if result_r > 0:
         return "Win"
     if result_r < 0:
@@ -222,7 +230,13 @@ def _result_label(result_r: float | None, status: str) -> str:
 
 
 def _result_tone(result_r: float | None, status: str) -> str:
-    if status == "open" or result_r is None:
+    if status == "open":
+        return "neutral"
+    if result_r is None:
+        if status == "target_hit":
+            return "positive"
+        if status == "stopped":
+            return "negative"
         return "neutral"
     if result_r > 0:
         return "positive"
