@@ -14,6 +14,13 @@ from trade_utils import get_trade_direction
 
 LOGGER = logging.getLogger(__name__)
 
+STATUS_LABELS = {
+    "open": "Open",
+    "stopped": "Stopped",
+    "target_hit": "Target Hit",
+    "closed": "Timed Exit",
+}
+
 
 def _now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -204,10 +211,34 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
     return round(pnl / risk, 2)
 
 
+def _result_label(result_r: float | None, status: str) -> str:
+    if status == "open" or result_r is None:
+        return "Open"
+    if result_r > 0:
+        return "Win"
+    if result_r < 0:
+        return "Loss"
+    return "Flat"
+
+
+def _result_tone(result_r: float | None, status: str) -> str:
+    if status == "open" or result_r is None:
+        return "neutral"
+    if result_r > 0:
+        return "positive"
+    if result_r < 0:
+        return "negative"
+    return "neutral"
+
+
 def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
     display = dict(trade)
     display["direction"] = get_trade_direction(trade["strategy"])
     display["unrealized_R"] = compute_unrealized_r(trade)
+    display["status_label"] = STATUS_LABELS.get(trade["status"], trade["status"].replace("_", " ").title())
+    result_r = trade.get("result_R")
+    display["result_label"] = _result_label(result_r, trade["status"])
+    display["result_tone"] = _result_tone(result_r, trade["status"])
     opened_at = _coerce_datetime(trade["date_opened"])
     display["days_open"] = (_now_utc() - opened_at).days
     return display

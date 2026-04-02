@@ -14,6 +14,9 @@
     .label { font-size: 12px; color: #67726b; text-transform: uppercase; letter-spacing: 0.08em; }
     .value { font-size: 22px; font-weight: bold; margin-top: 8px; }
     pre { white-space: pre-wrap; font-family: Menlo, monospace; font-size: 13px; background: #f4f0e7; padding: 14px; border-radius: 10px; }
+    .positive { color: #0f766e; }
+    .negative { color: #b42318; }
+    .neutral { color: #66726b; }
   </style>
 </head>
 <body>
@@ -31,13 +34,14 @@
         <div class="item"><div class="label">Strategy</div><div class="value">{{ trade.strategy }}</div></div>
         <div class="item"><div class="label">Direction</div><div class="value">{{ trade.direction }}</div></div>
         <div class="item"><div class="label">Timeframe</div><div class="value">{{ trade.timeframe }}</div></div>
-        <div class="item"><div class="label">Status</div><div class="value">{{ trade.status }}</div></div>
+        <div class="item"><div class="label">Status</div><div class="value">{{ trade.status_label }}</div></div>
+        <div class="item"><div class="label">Outcome</div><div class="value {{ trade.result_tone }}">{{ trade.result_label }}</div></div>
         <div class="item"><div class="label">Score</div><div class="value">{{ trade.score }}</div></div>
         <div class="item"><div class="label">Entry</div><div class="value">{{ trade.entry_price }}</div></div>
         <div class="item"><div class="label">Stop</div><div class="value">{{ trade.stop_loss }}</div></div>
         <div class="item"><div class="label">Target</div><div class="value">{{ trade.target_price }}</div></div>
         <div class="item"><div class="label">Current Price</div><div class="value">{{ trade.current_price or "-" }}</div></div>
-        <div class="item"><div class="label">Unrealized R</div><div class="value">{{ trade.unrealized_R if trade.unrealized_R is not none else "-" }}</div></div>
+        <div class="item"><div class="label">Result R</div><div class="value {{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R if trade.unrealized_R is not none else "-" }}</div></div>
         <div class="item"><div class="label">Days Open</div><div class="value">{{ trade.days_open }}</div></div>
       </div>
 

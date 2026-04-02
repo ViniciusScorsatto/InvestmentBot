@@ -15,6 +15,10 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #e4ddcb; }
     th { font-size: 13px; text-transform: uppercase; color: #66726b; }
+    .positive { color: #0f766e; font-weight: bold; }
+    .negative { color: #b42318; font-weight: bold; }
+    .neutral { color: #66726b; font-weight: bold; }
+    .badge { display: inline-block; padding: 5px 10px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; }
   </style>
 </head>
 <body>
@@ -45,6 +49,7 @@
             <th>Stop</th>
             <th>Target</th>
             <th>Status</th>
+            <th>Outcome</th>
             <th>Result R</th>
           </tr>
         </thead>
@@ -57,11 +62,12 @@
             <td>{{ trade.entry_price }}</td>
             <td>{{ trade.stop_loss }}</td>
             <td>{{ trade.target_price }}</td>
-            <td>{{ trade.status }}</td>
-            <td>{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
+            <td>{{ trade.status_label }}</td>
+            <td><span class="badge {{ trade.result_tone }}">{{ trade.result_label }}</span></td>
+            <td class="{{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="8">No trades found.</td></tr>
+          <tr><td colspan="9">No trades found.</td></tr>
           {% endfor %}
         </tbody>
       </table>
