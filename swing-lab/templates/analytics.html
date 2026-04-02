@@ -27,6 +27,34 @@
 
     <div class="grid">
       <div class="panel">
+        <h2>By Direction</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Direction</th>
+              <th>Win Rate</th>
+              <th>Avg R</th>
+              <th>Total R</th>
+              <th>Total Trades</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in direction_stats %}
+            <tr>
+              <td>{{ row.direction }}</td>
+              <td>{{ row.win_rate }}%</td>
+              <td>{{ row.avg_R }}</td>
+              <td>{{ row.total_R }}</td>
+              <td>{{ row.total_trades }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No direction data yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
         <h2>By Strategy</h2>
         <table>
           <thead>

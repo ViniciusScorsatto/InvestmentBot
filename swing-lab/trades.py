@@ -110,6 +110,7 @@ def list_trades(
     strategy: str | None = None,
     asset: str | None = None,
     asset_classes: list[str] | None = None,
+    direction: str | None = None,
 ) -> list[dict[str, Any]]:
     query = "SELECT * FROM trades WHERE 1=1"
     params: list[Any] = []
@@ -130,7 +131,11 @@ def list_trades(
         query += f" AND asset_class IN ({placeholders})"
         params.extend(asset_classes)
     query += " ORDER BY date_opened DESC"
-    return [_row_to_trade(row) for row in fetch_all(query, tuple(params))]
+    trades = [_row_to_trade(row) for row in fetch_all(query, tuple(params))]
+    if direction:
+        normalized_direction = direction.strip().lower()
+        trades = [trade for trade in trades if get_trade_direction(trade["strategy"]).lower() == normalized_direction]
+    return trades
 
 
 def get_trade(trade_id: int) -> dict[str, Any] | None:

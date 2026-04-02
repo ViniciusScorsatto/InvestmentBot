@@ -8,6 +8,7 @@ from config import APP_VERSION, CRYPTO_SYMBOL_TO_KRAKEN_PAIR, UNSUPPORTED_CRYPTO
 from db import ping_database
 from runtime_status import get_status
 from trades import enrich_trade_for_display, list_trades
+from trade_utils import get_trade_direction
 
 
 def _safe_pct(numerator: int, denominator: int) -> float:
@@ -79,6 +80,28 @@ def analytics_by_asset_class() -> list[dict[str, Any]]:
         analytics.append(
             {
                 "asset_class": asset_class,
+                "total_trades": len(trades),
+                "win_rate": _safe_pct(len(wins), len(closed)),
+                "avg_R": round(total_r / len(closed), 2) if closed else 0.0,
+                "total_R": total_r,
+            }
+        )
+    return sorted(analytics, key=lambda item: item["total_trades"], reverse=True)
+
+
+def analytics_by_direction() -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for trade in list_trades():
+        grouped[get_trade_direction(trade["strategy"])].append(trade)
+
+    analytics: list[dict[str, Any]] = []
+    for direction, trades in grouped.items():
+        closed = [trade for trade in trades if trade["status"] != "open"]
+        wins = [trade for trade in closed if (trade.get("result_R") or 0) > 0]
+        total_r = round(sum(trade.get("result_R") or 0 for trade in closed), 2)
+        analytics.append(
+            {
+                "direction": direction,
                 "total_trades": len(trades),
                 "win_rate": _safe_pct(len(wins), len(closed)),
                 "avg_R": round(total_r / len(closed), 2) if closed else 0.0,

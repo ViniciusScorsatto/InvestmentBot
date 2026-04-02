@@ -326,6 +326,7 @@ def evaluate_bearish_pullback(
 
     price_below_ema50 = price < ema50_value
     ema_stack_ok = ema20_value < ema50_value
+    trend_gap_strong = ((ema50_value - ema20_value) / price) >= 0.005 if price else False
     near_ema20 = abs(price - ema20_value) / price <= 0.02
     valid_rsi = rsi_value is not None and 45 <= rsi_value <= 60
 
@@ -336,6 +337,10 @@ def evaluate_bearish_pullback(
     if not ema_stack_ok:
         if debug_counter is not None:
             debug_counter["bearish_pullback_ema_stack_failed"] += 1
+        return None
+    if not trend_gap_strong:
+        if debug_counter is not None:
+            debug_counter["bearish_pullback_ema_gap_too_small"] += 1
         return None
     if not near_ema20:
         if debug_counter is not None:

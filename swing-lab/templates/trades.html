@@ -34,6 +34,7 @@
     <div class="panel">
       <form method="get" action="/trades">
         <input type="text" name="status" value="{{ filters.status }}" placeholder="status: open or closed">
+        <input type="text" name="direction" value="{{ filters.direction }}" placeholder="direction: long or short">
         <input type="text" name="strategy" value="{{ filters.strategy }}" placeholder="strategy">
         <input type="text" name="asset" value="{{ filters.asset }}" placeholder="asset">
         <button type="submit">Filter</button>

@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from config import APP_NAME, TEMPLATES_DIR
-from metrics import analytics_by_asset_class, analytics_by_strategy, calculate_summary, calculate_system_status
+from metrics import analytics_by_asset_class, analytics_by_direction, analytics_by_strategy, calculate_summary, calculate_system_status
 from db import ping_database
 from trades import enrich_trade_for_display, get_trade, list_trades
 
@@ -50,8 +50,12 @@ def trades_page(
     status: str | None = Query(default=None),
     strategy: str | None = Query(default=None),
     asset: str | None = Query(default=None),
+    direction: str | None = Query(default=None),
 ) -> HTMLResponse:
-    trades = [enrich_trade_for_display(trade) for trade in list_trades(status=status, strategy=strategy, asset=asset)]
+    trades = [
+        enrich_trade_for_display(trade)
+        for trade in list_trades(status=status, strategy=strategy, asset=asset, direction=direction)
+    ]
     return templates.TemplateResponse(
         request,
         "trades.html",
@@ -59,7 +63,7 @@ def trades_page(
             "request": request,
             "app_name": APP_NAME,
             "trades": trades,
-            "filters": {"status": status or "", "strategy": strategy or "", "asset": asset or ""},
+            "filters": {"status": status or "", "strategy": strategy or "", "asset": asset or "", "direction": direction or ""},
         },
     )
 
@@ -86,5 +90,6 @@ def analytics_page(request: Request) -> HTMLResponse:
             "app_name": APP_NAME,
             "strategy_stats": analytics_by_strategy(),
             "asset_class_stats": analytics_by_asset_class(),
+            "direction_stats": analytics_by_direction(),
         },
     )
