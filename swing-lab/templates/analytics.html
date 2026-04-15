@@ -27,6 +27,40 @@
 
     <div class="grid">
       <div class="panel">
+        <h2>By Setup Slice</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Timeframe</th>
+              <th>Direction</th>
+              <th>Win Rate</th>
+              <th>Avg R</th>
+              <th>Total R</th>
+              <th>Closed</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in setup_slice_stats %}
+            <tr>
+              <td>{{ row.strategy }}</td>
+              <td>{{ row.timeframe }}</td>
+              <td>{{ row.direction }}</td>
+              <td>{{ row.win_rate }}%</td>
+              <td>{{ row.avg_R }}</td>
+              <td>{{ row.total_R }}</td>
+              <td>{{ row.closed_trades }}</td>
+              <td>{{ row.total_trades }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8">No setup-slice data yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
         <h2>By Direction</h2>
         <table>
           <thead>

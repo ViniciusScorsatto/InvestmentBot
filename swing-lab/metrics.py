@@ -111,6 +111,36 @@ def analytics_by_direction() -> list[dict[str, Any]]:
     return sorted(analytics, key=lambda item: item["total_trades"], reverse=True)
 
 
+def analytics_by_setup_slice() -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for trade in list_trades():
+        key = (trade["strategy"], trade["timeframe"], get_trade_direction(trade["strategy"]))
+        grouped[key].append(trade)
+
+    analytics: list[dict[str, Any]] = []
+    for (strategy, timeframe, direction), trades in grouped.items():
+        closed = [trade for trade in trades if trade["status"] != "open"]
+        wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
+        total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
+        analytics.append(
+            {
+                "strategy": strategy,
+                "timeframe": timeframe,
+                "direction": direction,
+                "total_trades": len(trades),
+                "closed_trades": len(closed),
+                "win_rate": _safe_pct(len(wins), len(closed)),
+                "avg_R": round(total_r / len(closed), 2) if closed else 0.0,
+                "total_R": total_r,
+            }
+        )
+    return sorted(
+        analytics,
+        key=lambda item: (item["closed_trades"], item["total_trades"], item["total_R"]),
+        reverse=True,
+    )
+
+
 def calculate_system_status() -> dict[str, Any]:
     runtime = get_status()
     formatted_runtime = dict(runtime)

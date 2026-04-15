@@ -6,7 +6,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from config import APP_NAME, TEMPLATES_DIR
-from metrics import analytics_by_asset_class, analytics_by_direction, analytics_by_strategy, calculate_summary, calculate_system_status
+from metrics import (
+    analytics_by_asset_class,
+    analytics_by_direction,
+    analytics_by_setup_slice,
+    analytics_by_strategy,
+    calculate_summary,
+    calculate_system_status,
+)
 from db import ping_database
 from trades import enrich_trade_for_display, get_trade, list_trades
 
@@ -91,5 +98,6 @@ def analytics_page(request: Request) -> HTMLResponse:
             "strategy_stats": analytics_by_strategy(),
             "asset_class_stats": analytics_by_asset_class(),
             "direction_stats": analytics_by_direction(),
+            "setup_slice_stats": analytics_by_setup_slice(),
         },
     )
