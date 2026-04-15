@@ -195,6 +195,13 @@ def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
     return None
 
 
+def resolve_result_r(trade: dict[str, Any]) -> float | None:
+    stored_result = trade.get("result_R")
+    if stored_result is not None:
+        return float(stored_result)
+    return _compute_result_r_for_trade(trade)
+
+
 def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
     updated: list[dict[str, Any]] = []
     for trade in list_trades(status="open", asset_classes=asset_classes):

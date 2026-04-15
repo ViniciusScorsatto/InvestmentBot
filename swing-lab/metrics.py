@@ -7,7 +7,7 @@ from typing import Any
 from config import APP_VERSION, CRYPTO_SYMBOL_TO_KRAKEN_PAIR, UNSUPPORTED_CRYPTO_WATCHLIST
 from db import ping_database
 from runtime_status import get_status
-from trades import enrich_trade_for_display, list_trades
+from trades import enrich_trade_for_display, list_trades, resolve_result_r
 from trade_utils import get_trade_direction
 
 
@@ -32,8 +32,8 @@ def calculate_summary() -> dict[str, Any]:
     closed = [trade for trade in trades if trade["status"] != "open"]
     open_trades = [enrich_trade_for_display(trade) for trade in trades if trade["status"] == "open"]
 
-    wins = [trade for trade in closed if (trade.get("result_R") or 0) > 0]
-    total_r = round(sum(trade.get("result_R") or 0 for trade in closed), 2)
+    wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
+    total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
     avg_r = round(total_r / len(closed), 2) if closed else 0.0
 
     return {
@@ -54,8 +54,8 @@ def analytics_by_strategy() -> list[dict[str, Any]]:
     analytics: list[dict[str, Any]] = []
     for strategy, trades in grouped.items():
         closed = [trade for trade in trades if trade["status"] != "open"]
-        wins = [trade for trade in closed if (trade.get("result_R") or 0) > 0]
-        total_r = round(sum(trade.get("result_R") or 0 for trade in closed), 2)
+        wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
+        total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
             {
                 "strategy": strategy,
@@ -75,8 +75,8 @@ def analytics_by_asset_class() -> list[dict[str, Any]]:
     analytics: list[dict[str, Any]] = []
     for asset_class, trades in grouped.items():
         closed = [trade for trade in trades if trade["status"] != "open"]
-        wins = [trade for trade in closed if (trade.get("result_R") or 0) > 0]
-        total_r = round(sum(trade.get("result_R") or 0 for trade in closed), 2)
+        wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
+        total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
             {
                 "asset_class": asset_class,
@@ -97,8 +97,8 @@ def analytics_by_direction() -> list[dict[str, Any]]:
     analytics: list[dict[str, Any]] = []
     for direction, trades in grouped.items():
         closed = [trade for trade in trades if trade["status"] != "open"]
-        wins = [trade for trade in closed if (trade.get("result_R") or 0) > 0]
-        total_r = round(sum(trade.get("result_R") or 0 for trade in closed), 2)
+        wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
+        total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
             {
                 "direction": direction,
