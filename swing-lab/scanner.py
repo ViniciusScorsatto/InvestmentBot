@@ -26,7 +26,6 @@ from strategies import (
     detect_bearish_market_alignment,
     detect_market_alignment,
     empty_debug_counter,
-    evaluate_bearish_pullback,
     evaluate_breakdown,
     evaluate_breakout,
     evaluate_trend_pullback,
@@ -269,7 +268,6 @@ def scan_market(
                 evaluators = (
                     (evaluate_trend_pullback, alignment),
                     (evaluate_breakout, alignment),
-                    (evaluate_bearish_pullback, bearish_alignment),
                     (evaluate_breakdown, bearish_alignment),
                 )
                 for evaluator, market_score in evaluators:
