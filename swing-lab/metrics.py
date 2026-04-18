@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config import (
@@ -41,6 +41,7 @@ def _parse_date_filter(value: str | None, end_of_day: bool = False) -> datetime 
         parsed = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
         if end_of_day:
             parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
 
 
