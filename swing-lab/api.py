@@ -7,10 +7,8 @@ from fastapi.templating import Jinja2Templates
 
 from config import APP_NAME, TEMPLATES_DIR
 from metrics import (
-    analytics_by_asset_class,
-    analytics_by_direction,
-    analytics_by_setup_slice,
-    analytics_by_strategy,
+    analytics_payload,
+    analytics_since_strategy_change,
     calculate_summary,
     calculate_system_status,
 )
@@ -88,16 +86,25 @@ def trade_detail(request: Request, trade_id: int) -> HTMLResponse:
 
 
 @router.get("/analytics", response_class=HTMLResponse)
-def analytics_page(request: Request) -> HTMLResponse:
+def analytics_page(
+    request: Request,
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+) -> HTMLResponse:
+    filtered = analytics_payload(start_date=start_date, end_date=end_date)
+    since_change = analytics_since_strategy_change()
     return templates.TemplateResponse(
         request,
         "analytics.html",
         {
             "request": request,
             "app_name": APP_NAME,
-            "strategy_stats": analytics_by_strategy(),
-            "asset_class_stats": analytics_by_asset_class(),
-            "direction_stats": analytics_by_direction(),
-            "setup_slice_stats": analytics_by_setup_slice(),
+            "strategy_stats": filtered["strategy_stats"],
+            "asset_class_stats": filtered["asset_class_stats"],
+            "direction_stats": filtered["direction_stats"],
+            "setup_slice_stats": filtered["setup_slice_stats"],
+            "analytics_summary": filtered["summary"],
+            "since_change": since_change,
+            "filters": {"start_date": start_date or "", "end_date": end_date or ""},
         },
     )
