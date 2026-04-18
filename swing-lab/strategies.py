@@ -106,19 +106,28 @@ def _score_components(
     average_volume: float,
     volume: float,
     breakout: bool,
+    direction: str = "bullish",
 ) -> dict[str, int]:
     trend_score = 0
     momentum_score = 0
     setup_score = 0
 
-    if price > ema50:
-        trend_score += 15
-    if ema20 > ema50:
-        trend_score += 15
+    if direction == "bullish":
+        if price > ema50:
+            trend_score += 15
+        if ema20 > ema50:
+            trend_score += 15
+        rsi_effective = current_rsi
+    else:
+        if price < ema50:
+            trend_score += 15
+        if ema20 < ema50:
+            trend_score += 15
+        rsi_effective = (100 - current_rsi) if current_rsi is not None else None
 
-    if current_rsi is not None and 45 <= current_rsi <= 65:
+    if rsi_effective is not None and 45 <= rsi_effective <= 65:
         momentum_score += 15
-    elif current_rsi is not None and 40 <= current_rsi <= 70:
+    elif rsi_effective is not None and 40 <= rsi_effective <= 70:
         momentum_score += 10
     if volume >= average_volume:
         momentum_score += 10
@@ -167,8 +176,9 @@ def evaluate_trend_pullback(
 
     price_above_ema50 = price > ema50_value
     ema_stack_ok = ema20_value > ema50_value
+    trend_gap_strong = ((ema20_value - ema50_value) / price) >= 0.005 if price else False
     near_ema20 = abs(price - ema20_value) / price <= 0.02
-    valid_rsi = rsi_value is not None and 40 <= rsi_value <= 55
+    valid_rsi = rsi_value is not None and 40 <= rsi_value <= 60
 
     if not price_above_ema50:
         if debug_counter is not None:
@@ -177,6 +187,10 @@ def evaluate_trend_pullback(
     if not ema_stack_ok:
         if debug_counter is not None:
             debug_counter["trend_pullback_ema_stack_failed"] += 1
+        return None
+    if not trend_gap_strong:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_ema_gap_too_small"] += 1
         return None
     if not near_ema20:
         if debug_counter is not None:
@@ -266,7 +280,7 @@ def evaluate_breakout(
 
     stop = min(prior_20_high * 0.985, recent_low)
     risk = price - stop
-    if risk <= 0:
+    if risk <= 0 or risk < price * 0.005:
         if debug_counter is not None:
             debug_counter["breakout_invalid_risk"] += 1
         return None
@@ -360,13 +374,14 @@ def evaluate_bearish_pullback(
     target = price - (2 * risk)
 
     components = _score_components(
-        price=ema50_value + (ema50_value - price),
-        ema20=ema50_value + (ema50_value - ema20_value),
+        price=price,
+        ema20=ema20_value,
         ema50=ema50_value,
-        current_rsi=100 - rsi_value if rsi_value is not None else None,
+        current_rsi=rsi_value,
         average_volume=sum(volumes[-20:]) / 20,
         volume=volumes[-1],
         breakout=False,
+        direction="bearish",
     )
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
@@ -430,7 +445,7 @@ def evaluate_breakdown(
 
     stop = max(prior_20_low * 1.015, recent_high)
     risk = stop - price
-    if risk <= 0:
+    if risk <= 0 or risk < price * 0.005:
         if debug_counter is not None:
             debug_counter["breakdown_invalid_risk"] += 1
         return None
@@ -438,13 +453,14 @@ def evaluate_breakdown(
 
     current_rsi = rsi_series[-1]
     components = _score_components(
-        price=ema50_series[-1] + (ema50_series[-1] - price),
-        ema20=ema50_series[-1] + (ema50_series[-1] - ema20_series[-1]),
+        price=price,
+        ema20=ema20_series[-1],
         ema50=ema50_series[-1],
-        current_rsi=100 - current_rsi if current_rsi is not None else None,
+        current_rsi=current_rsi,
         average_volume=avg_volume,
         volume=volumes[-1],
         breakout=True,
+        direction="bearish",
     )
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
