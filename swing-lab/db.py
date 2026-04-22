@@ -78,6 +78,17 @@ def initialize_db() -> None:
             )
             """
         )
+        for statement in (
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS partial_taken BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS partial_taken_at TIMESTAMPTZ",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS partial_price DOUBLE PRECISION",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS partial_result_R DOUBLE PRECISION DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS effective_stop_loss DOUBLE PRECISION",
+        ):
+            connection.execute(statement)
+        connection.execute("UPDATE trades SET partial_taken = false WHERE partial_taken IS NULL")
+        connection.execute("UPDATE trades SET partial_result_R = 0 WHERE partial_result_R IS NULL")
+        connection.execute("UPDATE trades SET effective_stop_loss = stop_loss WHERE effective_stop_loss IS NULL")
 
 
 def ping_database() -> bool:

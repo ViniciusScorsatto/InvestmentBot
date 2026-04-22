@@ -26,10 +26,13 @@ from strategies import (
     detect_bearish_market_alignment,
     detect_market_alignment,
     empty_debug_counter,
+    ema,
+    evaluate_bearish_pullback,
     evaluate_breakdown,
     evaluate_breakout,
     evaluate_trend_pullback,
 )
+from trade_utils import get_correlation_group
 
 
 LOGGER = logging.getLogger(__name__)
@@ -57,6 +60,31 @@ def _aggregate_bars(bars: list[dict[str, Any]], group_size: int) -> list[dict[st
             }
         )
     return aggregated
+
+
+def _detect_regime(daily_bars: list[dict[str, Any]]) -> str:
+    if len(daily_bars) < 60:
+        return "neutral"
+    closes = [bar["close"] for bar in daily_bars]
+    ema20 = ema(closes, 20)[-1]
+    ema50 = ema(closes, 50)[-1]
+    close = closes[-1]
+    if close > ema50 and ema20 > ema50:
+        return "bullish"
+    if close < ema50 and ema20 < ema50:
+        return "bearish"
+    return "neutral"
+
+
+def _regime_by_asset_class(enabled_asset_classes: set[str]) -> dict[str, str]:
+    regimes: dict[str, str] = {}
+    if "crypto" in enabled_asset_classes:
+        regimes["crypto"] = _detect_regime(fetch_asset_data("BTC", "crypto")["1d"])
+    if "stock" in enabled_asset_classes or "etf" in enabled_asset_classes:
+        spy_regime = _detect_regime(fetch_asset_data("SPY", "etf")["1d"])
+        regimes["stock"] = spy_regime
+        regimes["etf"] = spy_regime
+    return regimes
 
 
 def _safe_json(response: requests.Response) -> Any:
@@ -230,6 +258,7 @@ def scan_market(
     }
     rule_failures: dict[str, int] = {}
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
+    regimes = _regime_by_asset_class(enabled_asset_classes)
     for asset_class, symbols in WATCHLIST.items():
         if asset_class not in enabled_asset_classes:
             continue
@@ -243,6 +272,7 @@ def scan_market(
             asset_rule_failures = empty_debug_counter()
             status = "ok"
             note = "No setup matched"
+            regime = regimes.get(asset_class, "neutral")
 
             if len(daily_bars) < 60:
                 diagnostics.append(
@@ -257,6 +287,24 @@ def scan_market(
                     }
                 )
                 continue
+            if regime == "neutral":
+                diagnostics.append(
+                    {
+                        "asset": asset,
+                        "asset_class": asset_class,
+                        "daily_bars": len(daily_bars),
+                        "four_hour_bars": len(four_hour_bars),
+                        "status": "regime_neutral",
+                        "note": "Regime gate blocked new long/short candidates",
+                        "qualified_setups": 0,
+                        "below_threshold": 0,
+                        "matched_patterns": 0,
+                        "top_failure": "regime_neutral",
+                    }
+                )
+                rejection_counts["no_pattern_match"] += 1
+                rule_failures["regime_neutral"] = rule_failures.get("regime_neutral", 0) + 1
+                continue
             alignment = detect_market_alignment(daily_bars)
             bearish_alignment = detect_bearish_market_alignment(daily_bars)
             for timeframe in ("4h", "1d"):
@@ -266,9 +314,15 @@ def scan_market(
                     note = f"{timeframe} needs at least 60 bars"
                     continue
                 evaluators = (
-                    (evaluate_trend_pullback, alignment),
-                    (evaluate_breakout, alignment),
-                    (evaluate_breakdown, bearish_alignment),
+                    (
+                        (evaluate_trend_pullback, alignment),
+                        (evaluate_breakout, alignment),
+                    )
+                    if regime == "bullish"
+                    else (
+                        (evaluate_bearish_pullback, bearish_alignment),
+                        (evaluate_breakdown, bearish_alignment),
+                    )
                 )
                 for evaluator, market_score in evaluators:
                     trade = evaluator(
@@ -281,6 +335,8 @@ def scan_market(
                     )
                     if not trade:
                         continue
+                    trade["correlation_group"] = get_correlation_group(asset, asset_class)
+                    trade["regime"] = regime
                     matched_patterns += 1
                     score_ok = trade["score"] >= MIN_SCORE
                     r_ok = trade["R_multiple"] >= MIN_R_MULTIPLE
@@ -344,12 +400,17 @@ def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[di
 def select_best_setups(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     seen_assets: set[tuple[str, str]] = set()
+    seen_groups: set[str] = set()
     for trade in candidates:
         key = (trade["asset"], trade["timeframe"])
+        group = trade.get("correlation_group") or get_correlation_group(trade["asset"], trade["asset_class"])
         if key in seen_assets:
+            continue
+        if group in seen_groups:
             continue
         selected.append(trade)
         seen_assets.add(key)
+        seen_groups.add(group)
         if len(selected) >= PREFERRED_TOP_SETUPS:
             break
     return selected

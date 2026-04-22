@@ -48,7 +48,9 @@
             <th>Strategy</th>
             <th>Entry</th>
             <th>Stop</th>
+            <th>Effective Stop</th>
             <th>Target</th>
+            <th>Partial</th>
             <th>Status</th>
             <th>Outcome</th>
             <th>Result R</th>
@@ -63,14 +65,16 @@
             <td>{{ trade.strategy }}</td>
             <td>{{ trade.entry_price }}</td>
             <td>{{ trade.stop_loss }}</td>
+            <td>{{ trade.effective_stop_loss }}</td>
             <td>{{ trade.target_price }}</td>
+            <td>{{ trade.partial_status }}</td>
             <td>{{ trade.status_label }}</td>
             <td><span class="badge {{ trade.result_tone }}">{{ trade.result_label }}</span></td>
             <td class="{{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
             <td class="{{ trade.result_tone }}">{{ trade.pnl_usd_100_label }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="10">No trades found.</td></tr>
+          <tr><td colspan="12">No trades found.</td></tr>
           {% endfor %}
         </tbody>
       </table>

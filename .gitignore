@@ -10,3 +10,4 @@ __pycache__/
 swing-lab/.venv/
 swing-lab/.pycache/
 swing-lab/data/trades.db
+swing-lab/current_setups_export.md
