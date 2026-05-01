@@ -20,6 +20,7 @@ from config import (
     YAHOO_CHART_URL,
     cache_ttl_for,
     default_cached_dataset,
+    strategy_enabled,
 )
 from db import execute, fetch_one
 from strategies import (
@@ -37,6 +38,15 @@ from trade_utils import get_correlation_group
 
 LOGGER = logging.getLogger(__name__)
 _LAST_CRYPTO_REQUEST_AT: datetime | None = None
+
+LONG_EVALUATORS = (
+    ("Trend Pullback", evaluate_trend_pullback),
+    ("Breakout", evaluate_breakout),
+)
+SHORT_EVALUATORS = (
+    ("Bearish Pullback", evaluate_bearish_pullback),
+    ("Breakdown", evaluate_breakdown),
+)
 
 
 def _to_iso(timestamp: int | float | str) -> str:
@@ -85,6 +95,11 @@ def _regime_by_asset_class(enabled_asset_classes: set[str]) -> dict[str, str]:
         regimes["stock"] = spy_regime
         regimes["etf"] = spy_regime
     return regimes
+
+
+def _enabled_evaluators_for_regime(regime: str) -> tuple[tuple[str, Any], ...]:
+    evaluators = LONG_EVALUATORS if regime == "bullish" else SHORT_EVALUATORS
+    return tuple((name, evaluator) for name, evaluator in evaluators if strategy_enabled(name))
 
 
 def _safe_json(response: requests.Response) -> Any:
@@ -313,18 +328,11 @@ def scan_market(
                     status = "insufficient_timeframe_history"
                     note = f"{timeframe} needs at least 60 bars"
                     continue
-                evaluators = (
-                    (
-                        (evaluate_trend_pullback, alignment),
-                        (evaluate_breakout, alignment),
-                    )
-                    if regime == "bullish"
-                    else (
-                        (evaluate_bearish_pullback, bearish_alignment),
-                        (evaluate_breakdown, bearish_alignment),
-                    )
-                )
-                for evaluator, market_score in evaluators:
+                enabled_evaluators = _enabled_evaluators_for_regime(regime)
+                if not enabled_evaluators:
+                    continue
+                market_score = alignment if regime == "bullish" else bearish_alignment
+                for _, evaluator in enabled_evaluators:
                     trade = evaluator(
                         bars,
                         asset,

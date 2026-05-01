@@ -184,12 +184,13 @@ def evaluate_trend_pullback(
     ema50_value = ema50_series[-1]
     rsi_value = rsi_series[-1]
     recent_low = min(lows[-5:])
+    recent_higher_low = min(lows[-5:]) > min(lows[-10:-5])
 
     price_above_ema50 = price > ema50_value
     ema_stack_ok = ema20_value > ema50_value
     trend_gap_strong = ((ema20_value - ema50_value) / price) >= 0.005 if price else False
-    near_ema20 = abs(price - ema20_value) / price <= 0.02
-    valid_rsi = rsi_value is not None and 40 <= rsi_value <= 60
+    near_ema20 = abs(price - ema20_value) / price <= 0.015
+    valid_rsi = rsi_value is not None and 45 <= rsi_value <= 58
 
     if not price_above_ema50:
         if debug_counter is not None:
@@ -210,6 +211,10 @@ def evaluate_trend_pullback(
     if not valid_rsi:
         if debug_counter is not None:
             debug_counter["trend_pullback_rsi_out_of_range"] += 1
+        return None
+    if not recent_higher_low:
+        if debug_counter is not None:
+            debug_counter["trend_pullback_recent_higher_low_failed"] += 1
         return None
 
     stop = recent_low
@@ -296,7 +301,7 @@ def evaluate_breakout(
         if debug_counter is not None:
             debug_counter["breakout_invalid_risk"] += 1
         return None
-    target = price + (2.5 * risk)
+    target = price + (3.0 * risk)
 
     components = _score_components(
         price=price,

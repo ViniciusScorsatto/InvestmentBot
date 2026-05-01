@@ -9,7 +9,9 @@ from config import (
     CRYPTO_SYMBOL_TO_KRAKEN_PAIR,
     LAST_STRATEGY_CHANGE_AT,
     LAST_STRATEGY_CHANGE_LABEL,
+    LAST_STRATEGY_CHANGE_NOTE,
     UNSUPPORTED_CRYPTO_WATCHLIST,
+    strategy_status_rows,
 )
 from db import ping_database
 from runtime_status import get_status
@@ -188,6 +190,7 @@ def analytics_payload(start_date: str | None = None, end_date: str | None = None
         "asset_class_stats": analytics_by_asset_class(trades),
         "direction_stats": analytics_by_direction(trades),
         "setup_slice_stats": analytics_by_setup_slice(trades),
+        "strategy_status": strategy_status_rows(),
     }
 
 
@@ -196,6 +199,7 @@ def analytics_since_strategy_change() -> dict[str, Any]:
     payload["label"] = LAST_STRATEGY_CHANGE_LABEL
     payload["since_at"] = LAST_STRATEGY_CHANGE_AT
     payload["since_at_display"] = _format_timestamp(LAST_STRATEGY_CHANGE_AT)
+    payload["note"] = LAST_STRATEGY_CHANGE_NOTE
     return payload
 
 

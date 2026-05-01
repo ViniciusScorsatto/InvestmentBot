@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from config import MAX_TRADE_DURATION_DAYS
+from config import strategy_max_trade_duration_days
 from db import execute, fetch_all, fetch_one
 from scanner import fetch_asset_data, select_best_setups
 from telegram import notify_trade_closed, notify_new_trade
@@ -41,7 +41,7 @@ def _row_to_trade(row: Any) -> dict[str, Any]:
     trade = dict(row)
     metadata_json = trade.get("metadata_json")
     trade["metadata"] = json.loads(metadata_json) if metadata_json else {}
-    for key in ("date_opened", "date_closed"):
+    for key in ("date_opened", "date_closed", "partial_taken_at", "runner_activated_at"):
         if trade.get(key) is not None and isinstance(trade[key], datetime):
             trade[key] = trade[key].isoformat()
     return trade
@@ -70,8 +70,8 @@ def create_trade(setup: dict[str, Any]) -> int | None:
             entry_price, stop_loss, target_price, current_price,
             R_multiple, score, date_opened, status,
             setup_notes, metadata_json, effective_stop_loss,
-            partial_taken, partial_result_R
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, false, 0)
+            partial_taken, partial_result_R, runner_activated
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, false, 0, false)
         RETURNING id
         """,
         (
@@ -187,7 +187,7 @@ def _close_trade(trade: dict[str, Any], status: str, current_price: float, resul
     LOGGER.info("Closed trade %s with status %s", trade["id"], status)
 
 
-def _mark_partial_taken(trade: dict[str, Any], current_price: float) -> dict[str, Any]:
+def _mark_legacy_partial_taken(trade: dict[str, Any], current_price: float) -> dict[str, Any]:
     execute(
         """
         UPDATE trades
@@ -204,6 +204,27 @@ def _mark_partial_taken(trade: dict[str, Any], current_price: float) -> dict[str
     updated = get_trade(trade["id"]) or trade
     LOGGER.info("Partial profit taken for trade %s at %s", trade["id"], current_price)
     return updated
+
+
+def _mark_runner_activated(trade: dict[str, Any], current_price: float) -> dict[str, Any]:
+    execute(
+        """
+        UPDATE trades
+        SET runner_activated = true,
+            runner_activated_at = %s,
+            effective_stop_loss = entry_price,
+            current_price = %s
+        WHERE id = %s
+        """,
+        (_now_utc(), current_price, trade["id"]),
+    )
+    updated = get_trade(trade["id"]) or trade
+    LOGGER.info("Runner mode activated for trade %s at %s", trade["id"], current_price)
+    return updated
+
+
+def _is_breakout_runner_strategy(strategy: str) -> bool:
+    return strategy == "Breakout"
 
 
 def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
@@ -224,22 +245,29 @@ def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
     if risk <= 0:
         return None
 
+    runner_activated = bool(trade.get("runner_activated"))
     partial_taken = bool(trade.get("partial_taken"))
     partial_result_r = float(trade.get("partial_result_R") or 0)
     if status == "stopped":
+        if runner_activated:
+            return 0.0
         return partial_result_r if partial_taken else -1.0
     if status == "target_hit" and target_price is not None:
         if direction == "Long":
             final_leg_r = (target_price - entry_price) / risk
         else:
             final_leg_r = (entry_price - target_price) / risk
-        return round(partial_result_r + (0.5 * final_leg_r) if partial_taken else final_leg_r, 2)
+        if partial_taken:
+            return round(partial_result_r + (0.5 * final_leg_r), 2)
+        return round(final_leg_r, 2)
     if status == "closed" and current_price is not None:
         if direction == "Long":
             current_leg_r = (current_price - entry_price) / risk
         else:
             current_leg_r = (entry_price - current_price) / risk
-        return round(partial_result_r + (0.5 * current_leg_r) if partial_taken else current_leg_r, 2)
+        if partial_taken:
+            return round(partial_result_r + (0.5 * current_leg_r), 2)
+        return round(current_leg_r, 2)
     return None
 
 
@@ -268,31 +296,45 @@ def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str,
         if risk <= 0:
             continue
 
+        runner_activated = bool(trade.get("runner_activated"))
         partial_taken = bool(trade.get("partial_taken"))
         partial_result_r = float(trade.get("partial_result_R") or 0)
         effective_stop = trade.get("effective_stop_loss") or trade["stop_loss"]
         days_open = (_now_utc() - _coerce_datetime(trade["date_opened"])).days
+        max_duration_days = strategy_max_trade_duration_days(trade["strategy"])
         if direction == "Long":
-            if not partial_taken and current_price >= partial_trigger:
-                trade = _mark_partial_taken(trade, current_price)
+            if (
+                _is_breakout_runner_strategy(trade["strategy"])
+                and not runner_activated
+                and not partial_taken
+                and current_price >= partial_trigger
+            ):
+                trade = _mark_runner_activated(trade, current_price)
+                runner_activated = True
+                effective_stop = trade["entry_price"]
+            elif not _is_breakout_runner_strategy(trade["strategy"]) and not partial_taken and current_price >= partial_trigger:
+                trade = _mark_legacy_partial_taken(trade, current_price)
                 partial_taken = True
                 partial_result_r = 0.5
                 effective_stop = trade["entry_price"]
 
             if current_price <= effective_stop:
-                result_r = partial_result_r if partial_taken else -1.0
+                if runner_activated:
+                    result_r = 0.0
+                else:
+                    result_r = partial_result_r if partial_taken else -1.0
                 _close_trade(trade, "stopped", current_price, result_r)
             elif current_price >= trade["target_price"]:
                 final_leg_r = (trade["target_price"] - trade["entry_price"]) / risk
                 result_r = partial_result_r + (0.5 * final_leg_r) if partial_taken else final_leg_r
                 _close_trade(trade, "target_hit", current_price, result_r)
-            elif days_open >= MAX_TRADE_DURATION_DAYS:
+            elif days_open >= max_duration_days:
                 current_leg_r = (current_price - trade["entry_price"]) / risk
                 result_r = partial_result_r + (0.5 * current_leg_r) if partial_taken else current_leg_r
                 _close_trade(trade, "closed", current_price, result_r)
         else:
             if not partial_taken and current_price <= partial_trigger:
-                trade = _mark_partial_taken(trade, current_price)
+                trade = _mark_legacy_partial_taken(trade, current_price)
                 partial_taken = True
                 partial_result_r = 0.5
                 effective_stop = trade["entry_price"]
@@ -304,7 +346,7 @@ def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str,
                 final_leg_r = (trade["entry_price"] - trade["target_price"]) / risk
                 result_r = partial_result_r + (0.5 * final_leg_r) if partial_taken else final_leg_r
                 _close_trade(trade, "target_hit", current_price, result_r)
-            elif days_open >= MAX_TRADE_DURATION_DAYS:
+            elif days_open >= max_duration_days:
                 current_leg_r = (trade["entry_price"] - current_price) / risk
                 result_r = partial_result_r + (0.5 * current_leg_r) if partial_taken else current_leg_r
                 _close_trade(trade, "closed", current_price, result_r)
@@ -324,6 +366,8 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
     if current_price is None or risk <= 0:
         return None
     current_leg_r = pnl / risk
+    if trade.get("runner_activated"):
+        return round(current_leg_r, 2)
     if trade.get("partial_taken"):
         return round(float(trade.get("partial_result_R") or 0) + (0.5 * current_leg_r), 2)
     return round(current_leg_r, 2)
@@ -340,6 +384,8 @@ def compute_notional_pnl_usd(trade: dict[str, Any], notional_usd: float = DISPLA
         pnl_fraction = (current_price - entry_price) / entry_price
     else:
         pnl_fraction = (entry_price - current_price) / entry_price
+    if trade.get("runner_activated"):
+        return round(notional_usd * pnl_fraction, 2)
     if trade.get("partial_taken"):
         partial_r = float(trade.get("partial_result_R") or 0)
         stop_loss = trade.get("stop_loss")
@@ -393,10 +439,16 @@ def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
     display["pnl_usd_100"] = compute_notional_pnl_usd(trade)
     display["pnl_usd_100_label"] = f"{display['pnl_usd_100']:+.2f}" if display["pnl_usd_100"] is not None else "-"
     display["effective_stop_loss"] = trade.get("effective_stop_loss") or trade["stop_loss"]
+    display["runner_activated"] = bool(trade.get("runner_activated"))
     display["partial_taken"] = bool(trade.get("partial_taken"))
-    display["partial_status"] = "Half size after 1R" if display["partial_taken"] and trade["status"] == "open" else "Full size"
-    if display["partial_taken"] and trade["status"] != "open":
+    if display["runner_activated"]:
+        display["partial_status"] = "Runner / breakeven active" if trade["status"] == "open" else "Runner triggered"
+    elif display["partial_taken"] and trade["status"] == "open":
+        display["partial_status"] = "Half size after 1R"
+    elif display["partial_taken"]:
         display["partial_status"] = "Partial taken"
+    else:
+        display["partial_status"] = "Full size"
     display["partial_result_R"] = float(trade.get("partial_result_R") or 0)
     display["status_label"] = STATUS_LABELS.get(trade["status"], trade["status"].replace("_", " ").title())
     result_r = resolve_result_r(trade)

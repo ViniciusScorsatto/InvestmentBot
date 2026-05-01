@@ -15,9 +15,14 @@
     .summary-card { border: 1px solid #e4ddcb; border-radius: 12px; padding: 14px; background: #fff; }
     .summary-label { font-size: 12px; color: #66726b; text-transform: uppercase; letter-spacing: 0.08em; }
     .summary-value { margin-top: 8px; font-size: 28px; font-weight: bold; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .status-chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; border: 1px solid #c5c0b2; }
+    .status-chip.enabled { color: #0f766e; border-color: #0f766e; }
+    .status-chip.disabled { color: #8f2d2d; border-color: #d37a7a; }
     .since-panel { padding: 28px; }
     .since-panel h2 { font-size: 30px; margin-top: 0; display: inline; background: #d8e8fb; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
     .since-panel .muted { display: inline-block; margin: 22px 0 26px; font-size: 20px; font-weight: bold; background: #d8e8fb; }
+    .since-panel .change-note { margin: 0 0 24px; line-height: 1.6; color: #41514b; }
     .since-panel .summary-card { padding: 20px; }
     .since-panel .summary-label { display: inline-block; background: #d8e8fb; font-size: 16px; }
     .since-panel .summary-value { display: inline-block; background: #c8ddfb; font-size: 42px; line-height: 1; padding: 0 4px; }
@@ -63,11 +68,28 @@
       <div class="panel since-panel">
         <h2>Since {{ since_change.label }}</h2>
         <p class="muted">Starting {{ since_change.since_at_display }}</p>
+        <p class="change-note">{{ since_change.note }}</p>
         <div class="summary-grid">
           <div class="summary-card"><div class="summary-label">Win Rate</div><div class="summary-value">{{ since_change.summary.win_rate }}%</div></div>
           <div class="summary-card"><div class="summary-label">Avg R</div><div class="summary-value">{{ since_change.summary.avg_R }}</div></div>
           <div class="summary-card"><div class="summary-label">Total R</div><div class="summary-value">{{ since_change.summary.total_R }}</div></div>
           <div class="summary-card"><div class="summary-label">Closed Trades</div><div class="summary-value">{{ since_change.summary.closed_trades }}</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Strategy Status</h2>
+        <div class="status-grid">
+          {% for row in strategy_status %}
+          <div class="summary-card">
+            <div class="summary-label">{{ row.strategy }}</div>
+            <div style="margin-top: 10px;">
+              <span class="status-chip {{ 'enabled' if row.enabled else 'disabled' }}">{{ row.status_label }}</span>
+            </div>
+            <p class="muted" style="margin: 12px 0 0;">{{ row.status_note }}</p>
+            <p class="muted" style="margin: 8px 0 0;">Max duration: {{ row.max_trade_duration_days }} days</p>
+          </div>
+          {% endfor %}
         </div>
       </div>
 

@@ -13,14 +13,41 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-LAST_STRATEGY_CHANGE_LABEL = "Trade Logic Upgrade"
-LAST_STRATEGY_CHANGE_AT = "2026-04-22T00:00:00+12:00"
+LAST_STRATEGY_CHANGE_LABEL = "Long-Only Strategy Tightening"
+LAST_STRATEGY_CHANGE_AT = "2026-05-01T00:00:00+12:00"
+LAST_STRATEGY_CHANGE_NOTE = (
+    "Breakdown disabled. Trend Pullback filters tightened. "
+    "Breakout target raised to 3R with breakeven-after-1R rule and 15-day max duration."
+)
 
 MAX_TRADES_PER_DAY = 5
 PREFERRED_TOP_SETUPS = 3
 MIN_SCORE = 75
 MIN_R_MULTIPLE = 2.0
-MAX_TRADE_DURATION_DAYS = 10
+DEFAULT_MAX_TRADE_DURATION_DAYS = 10
+
+STRATEGY_SETTINGS = {
+    "Trend Pullback": {
+        "enabled": True,
+        "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+        "status_note": "Primary long pullback setup.",
+    },
+    "Breakout": {
+        "enabled": True,
+        "max_trade_duration_days": 15,
+        "status_note": "Runner-style long breakout with breakeven after +1R.",
+    },
+    "Bearish Pullback": {
+        "enabled": False,
+        "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+        "status_note": "Disabled while the system stays long-only.",
+    },
+    "Breakdown": {
+        "enabled": False,
+        "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+        "status_note": "Disabled while the system stays long-only.",
+    },
+}
 
 SCAN_INTERVAL_HOURS = 4
 UPDATE_INTERVAL_MINUTES = 20
@@ -73,3 +100,41 @@ def cache_ttl_for(asset_class: str) -> int:
 
 def default_cached_dataset() -> str:
     return json.dumps({"4h": [], "1d": []})
+
+
+def strategy_settings(strategy: str) -> dict[str, object]:
+    return dict(
+        STRATEGY_SETTINGS.get(
+            strategy,
+            {
+                "enabled": True,
+                "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+                "status_note": "",
+            },
+        )
+    )
+
+
+def strategy_enabled(strategy: str) -> bool:
+    return bool(strategy_settings(strategy).get("enabled", True))
+
+
+def strategy_max_trade_duration_days(strategy: str) -> int:
+    return int(strategy_settings(strategy).get("max_trade_duration_days", DEFAULT_MAX_TRADE_DURATION_DAYS))
+
+
+def strategy_status_rows() -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for strategy, settings in STRATEGY_SETTINGS.items():
+        rows.append(
+            {
+                "strategy": strategy,
+                "enabled": bool(settings.get("enabled", True)),
+                "status_label": "Enabled" if settings.get("enabled", True) else "Disabled",
+                "max_trade_duration_days": int(
+                    settings.get("max_trade_duration_days", DEFAULT_MAX_TRADE_DURATION_DAYS)
+                ),
+                "status_note": str(settings.get("status_note", "")),
+            }
+        )
+    return rows

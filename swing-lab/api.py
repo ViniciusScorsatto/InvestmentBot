@@ -100,6 +100,7 @@ def analytics_page(
             "request": request,
             "app_name": APP_NAME,
             "strategy_stats": filtered["strategy_stats"],
+            "strategy_status": filtered["strategy_status"],
             "asset_class_stats": filtered["asset_class_stats"],
             "direction_stats": filtered["direction_stats"],
             "setup_slice_stats": filtered["setup_slice_stats"],

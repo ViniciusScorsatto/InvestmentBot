@@ -41,8 +41,8 @@
         <div class="item"><div class="label">Original Stop</div><div class="value">{{ trade.stop_loss }}</div></div>
         <div class="item"><div class="label">Effective Stop</div><div class="value">{{ trade.effective_stop_loss }}</div></div>
         <div class="item"><div class="label">Target</div><div class="value">{{ trade.target_price }}</div></div>
-        <div class="item"><div class="label">Partial Status</div><div class="value">{{ trade.partial_status }}</div></div>
-        <div class="item"><div class="label">Partial R</div><div class="value">{{ trade.partial_result_R }}</div></div>
+        <div class="item"><div class="label">Position State</div><div class="value">{{ trade.partial_status }}</div></div>
+        <div class="item"><div class="label">Legacy Partial R</div><div class="value">{{ trade.partial_result_R }}</div></div>
         <div class="item"><div class="label">Current Price</div><div class="value">{{ trade.current_price or "-" }}</div></div>
         <div class="item"><div class="label">Result R</div><div class="value {{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R if trade.unrealized_R is not none else "-" }}</div></div>
         <div class="item"><div class="label">P/L on $100</div><div class="value {{ trade.result_tone }}">{{ trade.pnl_usd_100_label }}</div></div>
