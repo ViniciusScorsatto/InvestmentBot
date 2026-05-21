@@ -26,6 +26,7 @@
     .since-panel .summary-card { padding: 20px; }
     .since-panel .summary-label { display: inline-block; background: #d8e8fb; font-size: 16px; }
     .since-panel .summary-value { display: inline-block; background: #c8ddfb; font-size: 42px; line-height: 1; padding: 0 4px; }
+    .default-range-note { margin-top: 10px; font-size: 14px; color: #66726b; }
     .filter-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
     input, button { padding: 10px 12px; border-radius: 10px; border: 1px solid #cabfa6; font: inherit; }
     button { background: #0f766e; color: #fff; cursor: pointer; }
@@ -57,6 +58,7 @@
           <input type="date" name="end_date" value="{{ filters.end_date }}">
           <button type="submit">Apply</button>
         </form>
+        <p class="default-range-note">Default view starts at the latest strategy change so the active ruleset is easier to judge.</p>
         <div class="summary-grid">
           <div class="summary-card"><div class="summary-label">Win Rate</div><div class="summary-value">{{ analytics_summary.win_rate }}%</div></div>
           <div class="summary-card"><div class="summary-label">Avg R</div><div class="summary-value">{{ analytics_summary.avg_R }}</div></div>
@@ -87,6 +89,7 @@
               <span class="status-chip {{ 'enabled' if row.enabled else 'disabled' }}">{{ row.status_label }}</span>
             </div>
             <p class="muted" style="margin: 12px 0 0;">{{ row.status_note }}</p>
+            <p class="muted" style="margin: 8px 0 0;">Timeframes: {{ row.allowed_timeframes }}</p>
             <p class="muted" style="margin: 8px 0 0;">Max duration: {{ row.max_trade_duration_days }} days</p>
           </div>
           {% endfor %}

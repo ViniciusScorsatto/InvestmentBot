@@ -14,9 +14,46 @@ fake_rows.dict_row = object()
 sys.modules.setdefault("psycopg", fake_psycopg)
 sys.modules.setdefault("psycopg.rows", fake_rows)
 
+fake_fastapi = types.ModuleType("fastapi")
+
+
+class _FakeRouter:
+    def get(self, *_args, **_kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+
+fake_fastapi.APIRouter = _FakeRouter
+fake_fastapi.Query = lambda default=None, **_kwargs: default
+fake_fastapi.Request = object
+sys.modules.setdefault("fastapi", fake_fastapi)
+
+fake_fastapi_responses = types.ModuleType("fastapi.responses")
+fake_fastapi_responses.JSONResponse = object
+fake_fastapi_responses.HTMLResponse = object
+fake_fastapi_responses.RedirectResponse = object
+sys.modules.setdefault("fastapi.responses", fake_fastapi_responses)
+
+fake_fastapi_templating = types.ModuleType("fastapi.templating")
+
+
+class _FakeTemplates:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def TemplateResponse(self, *args, **kwargs):
+        return None
+
+
+fake_fastapi_templating.Jinja2Templates = _FakeTemplates
+sys.modules.setdefault("fastapi.templating", fake_fastapi_templating)
+
 import scanner
 import strategies
 import trades
+import api
 
 
 def make_bars(length: int = 60, close: float = 100.0, high: float = 101.0, low: float = 99.0) -> list[dict[str, float | str]]:
@@ -66,6 +103,28 @@ class StrategyAdjustmentTests(unittest.TestCase):
 
         with patch.object(strategies, "ema", side_effect=fake_ema), patch.object(strategies, "rsi", return_value=[52.0] * len(bars)):
             trade = strategies.evaluate_trend_pullback(bars, "QQQ", "etf", "4h", 20)
+
+        self.assertIsNone(trade)
+
+    def test_trend_pullback_4h_requires_daily_confirmation(self) -> None:
+        bars = make_bars()
+        prior_lows = [90.0, 91.0, 92.0, 93.0, 94.0]
+        recent_lows = [95.0, 96.0, 97.0, 98.0, 99.0]
+        for offset, low in enumerate(prior_lows, start=10):
+            bars[-offset]["low"] = low
+        for offset, low in enumerate(recent_lows, start=5):
+            bars[-offset]["low"] = low
+        daily_bars = make_bars(length=70, close=100.0)
+
+        def fake_ema(values: list[float], period: int) -> list[float]:
+            if len(values) == len(daily_bars):
+                return [101.0 if period == 20 else 95.0] * len(values)
+            return [99.0 if period == 20 else 95.0] * len(values)
+
+        with patch.object(strategies, "ema", side_effect=fake_ema), patch.object(
+            strategies, "rsi", side_effect=[[52.0] * len(bars), [49.0] * len(daily_bars)]
+        ):
+            trade = strategies.evaluate_trend_pullback(bars, "SPY", "etf", "4h", 20, daily_bars=daily_bars)
 
         self.assertIsNone(trade)
 
@@ -251,6 +310,27 @@ class StrategyAdjustmentTests(unittest.TestCase):
 
         self.assertEqual(fake_breakdown.call_count, 0)
         self.assertFalse(any(candidate["strategy"] == "Breakdown" for candidate in candidates))
+
+    def test_breakout_one_day_is_not_evaluated_when_timeframe_disabled(self) -> None:
+        dataset = {"4h": make_bars(), "1d": make_bars()}
+        fake_breakout = Mock(return_value=None)
+
+        with patch.object(scanner, "_regime_by_asset_class", return_value={"stock": "bullish"}), patch.object(
+            scanner, "fetch_asset_data", return_value=dataset
+        ), patch.object(scanner, "LONG_EVALUATORS", (("Breakout", fake_breakout),)):
+            scanner.scan_market(asset_classes=["stock"])
+
+        self.assertEqual(fake_breakout.call_count, 7)
+
+    def test_analytics_page_defaults_to_last_strategy_change(self) -> None:
+        with patch.object(api, "analytics_payload", return_value={"strategy_stats": [], "strategy_status": [], "asset_class_stats": [], "direction_stats": [], "setup_slice_stats": [], "summary": {}}) as payload_mock, patch.object(
+            api, "analytics_since_strategy_change",
+            return_value={"summary": {}, "label": "x", "since_at_display": "y", "note": "z"},
+        ), patch.object(api.templates, "TemplateResponse", return_value="ok"):
+            response = api.analytics_page(request=object(), start_date=None, end_date=None)
+
+        self.assertEqual(response, "ok")
+        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-05-21")
 
 
 if __name__ == "__main__":

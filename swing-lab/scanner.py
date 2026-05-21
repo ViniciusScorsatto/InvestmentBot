@@ -20,6 +20,7 @@ from config import (
     YAHOO_CHART_URL,
     cache_ttl_for,
     default_cached_dataset,
+    strategy_allows_timeframe,
     strategy_enabled,
 )
 from db import execute, fetch_one
@@ -332,14 +333,19 @@ def scan_market(
                 if not enabled_evaluators:
                     continue
                 market_score = alignment if regime == "bullish" else bearish_alignment
-                for _, evaluator in enabled_evaluators:
+                for strategy_name, evaluator in enabled_evaluators:
+                    if not strategy_allows_timeframe(strategy_name, timeframe):
+                        continue
+                    evaluator_kwargs: dict[str, Any] = {"debug_counter": asset_rule_failures}
+                    if evaluator is evaluate_trend_pullback:
+                        evaluator_kwargs["daily_bars"] = daily_bars
                     trade = evaluator(
                         bars,
                         asset,
                         asset_class,
                         timeframe,
                         market_score,
-                        debug_counter=asset_rule_failures,
+                        **evaluator_kwargs,
                     )
                     if not trade:
                         continue

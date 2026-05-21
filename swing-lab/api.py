@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from config import APP_NAME, TEMPLATES_DIR
+from config import APP_NAME, LAST_STRATEGY_CHANGE_AT, TEMPLATES_DIR
 from metrics import (
     analytics_payload,
     analytics_since_strategy_change,
@@ -91,6 +91,8 @@ def analytics_page(
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
 ) -> HTMLResponse:
+    if not start_date and not end_date:
+        start_date = LAST_STRATEGY_CHANGE_AT[:10]
     filtered = analytics_payload(start_date=start_date, end_date=end_date)
     since_change = analytics_since_strategy_change()
     return templates.TemplateResponse(

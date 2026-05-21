@@ -13,11 +13,11 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-LAST_STRATEGY_CHANGE_LABEL = "Long-Only Strategy Tightening"
-LAST_STRATEGY_CHANGE_AT = "2026-05-01T00:00:00+12:00"
+LAST_STRATEGY_CHANGE_LABEL = "Long-Only Strategy Refinement"
+LAST_STRATEGY_CHANGE_AT = "2026-05-21T00:00:00+12:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Breakdown disabled. Trend Pullback filters tightened. "
-    "Breakout target raised to 3R with breakeven-after-1R rule and 15-day max duration."
+    "Breakout limited to 4h only. Trend Pullback 4h now requires daily confirmation. "
+    "Analytics defaults to the post-change window for judging the active system."
 )
 
 MAX_TRADES_PER_DAY = 5
@@ -30,21 +30,25 @@ STRATEGY_SETTINGS = {
     "Trend Pullback": {
         "enabled": True,
         "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
-        "status_note": "Primary long pullback setup.",
+        "allowed_timeframes": ["4h", "1d"],
+        "status_note": "Primary long pullback setup with extra daily confirmation on 4h entries.",
     },
     "Breakout": {
         "enabled": True,
         "max_trade_duration_days": 15,
-        "status_note": "Runner-style long breakout with breakeven after +1R.",
+        "allowed_timeframes": ["4h"],
+        "status_note": "Runner-style long breakout with breakeven after +1R, limited to 4h.",
     },
     "Bearish Pullback": {
         "enabled": False,
         "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+        "allowed_timeframes": ["4h", "1d"],
         "status_note": "Disabled while the system stays long-only.",
     },
     "Breakdown": {
         "enabled": False,
         "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+        "allowed_timeframes": ["4h", "1d"],
         "status_note": "Disabled while the system stays long-only.",
     },
 }
@@ -109,6 +113,7 @@ def strategy_settings(strategy: str) -> dict[str, object]:
             {
                 "enabled": True,
                 "max_trade_duration_days": DEFAULT_MAX_TRADE_DURATION_DAYS,
+                "allowed_timeframes": ["4h", "1d"],
                 "status_note": "",
             },
         )
@@ -123,6 +128,11 @@ def strategy_max_trade_duration_days(strategy: str) -> int:
     return int(strategy_settings(strategy).get("max_trade_duration_days", DEFAULT_MAX_TRADE_DURATION_DAYS))
 
 
+def strategy_allows_timeframe(strategy: str, timeframe: str) -> bool:
+    allowed_timeframes = strategy_settings(strategy).get("allowed_timeframes", ["4h", "1d"])
+    return timeframe in allowed_timeframes
+
+
 def strategy_status_rows() -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for strategy, settings in STRATEGY_SETTINGS.items():
@@ -134,6 +144,7 @@ def strategy_status_rows() -> list[dict[str, object]]:
                 "max_trade_duration_days": int(
                     settings.get("max_trade_duration_days", DEFAULT_MAX_TRADE_DURATION_DAYS)
                 ),
+                "allowed_timeframes": ", ".join(settings.get("allowed_timeframes", ["4h", "1d"])),
                 "status_note": str(settings.get("status_note", "")),
             }
         )

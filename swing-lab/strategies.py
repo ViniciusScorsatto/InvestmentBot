@@ -165,6 +165,7 @@ def evaluate_trend_pullback(
     asset_class: str,
     timeframe: str,
     market_alignment: int,
+    daily_bars: list[dict[str, Any]] | None = None,
     debug_counter: Counter[str] | None = None,
 ) -> dict[str, Any] | None:
     if len(bars) < 60:
@@ -216,6 +217,20 @@ def evaluate_trend_pullback(
         if debug_counter is not None:
             debug_counter["trend_pullback_recent_higher_low_failed"] += 1
         return None
+    if timeframe == "4h" and daily_bars:
+        daily_closes = [bar["close"] for bar in daily_bars]
+        daily_ema20 = ema(daily_closes, 20)[-1]
+        daily_rsi_value = rsi(daily_closes, 14)[-1]
+        daily_close_confirmed = daily_closes[-1] > daily_ema20
+        daily_rsi_confirmed = daily_rsi_value is not None and daily_rsi_value > 50
+        if not daily_close_confirmed:
+            if debug_counter is not None:
+                debug_counter["trend_pullback_daily_close_below_ema20"] += 1
+            return None
+        if not daily_rsi_confirmed:
+            if debug_counter is not None:
+                debug_counter["trend_pullback_daily_rsi_not_confirmed"] += 1
+            return None
 
     stop = recent_low
     risk = price - stop
