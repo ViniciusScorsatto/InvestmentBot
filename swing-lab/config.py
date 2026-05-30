@@ -13,11 +13,11 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-LAST_STRATEGY_CHANGE_LABEL = "Long-Only Strategy Refinement"
-LAST_STRATEGY_CHANGE_AT = "2026-05-21T00:00:00+12:00"
+LAST_STRATEGY_CHANGE_LABEL = "Learning Model Overlay"
+LAST_STRATEGY_CHANGE_AT = "2026-05-30T00:00:00+12:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Breakout limited to 4h only. Trend Pullback 4h now requires daily confirmation. "
-    "Analytics defaults to the post-change window for judging the active system."
+    "Candidates keep using live market APIs and deterministic strategy rules, then receive a learned edge score from closed trade outcomes. "
+    "The model only blocks setups after enough similar historical trades exist."
 )
 
 MAX_TRADES_PER_DAY = 5
@@ -25,6 +25,10 @@ PREFERRED_TOP_SETUPS = 3
 MIN_SCORE = 75
 MIN_R_MULTIPLE = 2.0
 DEFAULT_MAX_TRADE_DURATION_DAYS = 10
+LEARNING_MODEL_ENABLED = os.getenv("SWING_LAB_LEARNING_MODEL_ENABLED", "true").lower() == "true"
+LEARNING_MODEL_WEIGHT = float(os.getenv("SWING_LAB_LEARNING_MODEL_WEIGHT", "0.35"))
+LEARNING_MODEL_MIN_SAMPLE = int(os.getenv("SWING_LAB_LEARNING_MODEL_MIN_SAMPLE", "8"))
+LEARNING_MODEL_MIN_SCORE = int(os.getenv("SWING_LAB_LEARNING_MODEL_MIN_SCORE", "45"))
 
 STRATEGY_SETTINGS = {
     "Trend Pullback": {

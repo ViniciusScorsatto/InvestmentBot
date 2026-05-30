@@ -7,6 +7,7 @@ from typing import Any
 
 from config import strategy_max_trade_duration_days
 from db import execute, fetch_all, fetch_one
+from learning_model import clear_learning_cache
 from scanner import fetch_asset_data, select_best_setups
 from telegram import notify_trade_closed, notify_new_trade
 from trade_utils import get_correlation_group, get_trade_direction
@@ -183,6 +184,7 @@ def _close_trade(trade: dict[str, Any], status: str, current_price: float, resul
         """,
         (status, current_price, _now_utc(), round(result_r, 2), trade["id"]),
     )
+    clear_learning_cache()
     notify_trade_closed(trade, status, result_r)
     LOGGER.info("Closed trade %s with status %s", trade["id"], status)
 
@@ -491,5 +493,6 @@ def backfill_missing_trade_results() -> int:
         )
         updated += 1
     if updated:
+        clear_learning_cache()
         LOGGER.info("Backfilled result_R for %s legacy closed trades", updated)
     return updated

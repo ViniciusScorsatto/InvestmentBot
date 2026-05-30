@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 import sys
 import types
@@ -54,6 +55,7 @@ import scanner
 import strategies
 import trades
 import api
+import learning_model
 
 
 def make_bars(length: int = 60, close: float = 100.0, high: float = 101.0, low: float = 99.0) -> list[dict[str, float | str]]:
@@ -330,7 +332,94 @@ class StrategyAdjustmentTests(unittest.TestCase):
             response = api.analytics_page(request=object(), start_date=None, end_date=None)
 
         self.assertEqual(response, "ok")
-        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-05-21")
+        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-05-30")
+
+    def test_learning_model_blocks_repeated_bad_slice(self) -> None:
+        rows = [
+            {
+                "asset": "AAPL",
+                "asset_class": "stock",
+                "strategy": "Breakout",
+                "timeframe": "4h",
+                "result_R": -1.0,
+                "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
+            }
+            for _ in range(8)
+        ]
+        setup = {
+            "asset": "AAPL",
+            "asset_class": "stock",
+            "strategy": "Breakout",
+            "timeframe": "4h",
+            "components": {"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}},
+        }
+
+        learning_model.clear_learning_cache()
+        with patch.object(learning_model, "fetch_all", return_value=rows):
+            feedback = learning_model.score_setup(setup)
+        learning_model.clear_learning_cache()
+
+        self.assertEqual(feedback["confidence"], "active")
+        self.assertFalse(feedback["approved"])
+        self.assertLess(feedback["model_score"], 45)
+
+    def test_scanner_rejects_candidate_when_learning_model_disapproves(self) -> None:
+        dataset = {"4h": make_bars(), "1d": make_bars()}
+
+        def fake_breakout(
+            bars: list[dict[str, object]],
+            asset: str,
+            asset_class: str,
+            timeframe: str,
+            market_alignment: int,
+            **_: object,
+        ) -> dict[str, object]:
+            return {
+                "asset": asset,
+                "asset_class": asset_class,
+                "strategy": "Breakout",
+                "timeframe": timeframe,
+                "entry_price": 100.0,
+                "stop_loss": 95.0,
+                "target_price": 115.0,
+                "R_multiple": 3.0,
+                "score": 82,
+                "components": {"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}},
+            }
+
+        feedback = {
+            "model_score": 20,
+            "learned_win_rate": 0.0,
+            "learned_avg_R": -1.0,
+            "sample_size": 8,
+            "confidence": "active",
+            "approved": False,
+            "min_score": 45,
+        }
+        with patch.object(scanner, "_regime_by_asset_class", return_value={"stock": "bullish"}), patch.object(
+            scanner, "fetch_asset_data", return_value=dataset
+        ), patch.object(scanner, "LONG_EVALUATORS", (("Breakout", fake_breakout),)), patch.object(scanner, "score_setup", return_value=feedback):
+            candidates, _, near_misses, rejection_counts = scanner.scan_market(asset_classes=["stock"])
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(rejection_counts["filtered_by_learning_model"], 7)
+        self.assertTrue(all(item["model_feedback"]["approved"] is False for item in near_misses))
+
+    def test_learning_model_payload_groups_stances(self) -> None:
+        rows = [
+            {"stance": "favored", "slice": "Breakout", "model_score": 72},
+            {"stance": "penalized", "slice": "Trend Pullback", "model_score": 32},
+            {"stance": "warming_up", "slice": "RSI <= 60", "model_score": 51},
+        ]
+
+        with patch.object(api, "learning_model_rows", return_value=rows), patch.object(
+            api,
+            "JSONResponse",
+            side_effect=lambda payload, **_: types.SimpleNamespace(body=json.dumps(payload, separators=(",", ":")).encode()),
+        ):
+            response = api.learning_model_payload()
+
+        self.assertEqual(response.body, b'{"favored":[{"stance":"favored","slice":"Breakout","model_score":72}],"penalized":[{"stance":"penalized","slice":"Trend Pullback","model_score":32}],"all":[{"stance":"favored","slice":"Breakout","model_score":72},{"stance":"penalized","slice":"Trend Pullback","model_score":32},{"stance":"warming_up","slice":"RSI <= 60","model_score":51}]}')
 
 
 if __name__ == "__main__":

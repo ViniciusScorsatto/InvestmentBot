@@ -13,6 +13,7 @@ from metrics import (
     calculate_system_status,
 )
 from db import ping_database
+from learning_model import learning_model_rows
 from trades import enrich_trade_for_display, get_trade, list_trades
 
 
@@ -95,6 +96,7 @@ def analytics_page(
         start_date = LAST_STRATEGY_CHANGE_AT[:10]
     filtered = analytics_payload(start_date=start_date, end_date=end_date)
     since_change = analytics_since_strategy_change()
+    learning_rows = learning_model_rows()
     return templates.TemplateResponse(
         request,
         "analytics.html",
@@ -108,6 +110,21 @@ def analytics_page(
             "setup_slice_stats": filtered["setup_slice_stats"],
             "analytics_summary": filtered["summary"],
             "since_change": since_change,
+            "learning_model_rows": learning_rows,
+            "learning_model_favored": [row for row in learning_rows if row["stance"] == "favored"][:8],
+            "learning_model_penalized": [row for row in learning_rows if row["stance"] == "penalized"][:8],
             "filters": {"start_date": start_date or "", "end_date": end_date or ""},
         },
+    )
+
+
+@router.get("/analytics/learning")
+def learning_model_payload() -> JSONResponse:
+    rows = learning_model_rows()
+    return JSONResponse(
+        {
+            "favored": [row for row in rows if row["stance"] == "favored"],
+            "penalized": [row for row in rows if row["stance"] == "penalized"],
+            "all": rows,
+        }
     )

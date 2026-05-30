@@ -19,6 +19,11 @@
     .status-chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; border: 1px solid #c5c0b2; }
     .status-chip.enabled { color: #0f766e; border-color: #0f766e; }
     .status-chip.disabled { color: #8f2d2d; border-color: #d37a7a; }
+    .stance-chip { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: bold; border: 1px solid currentColor; }
+    .stance-chip.favored { color: #0f766e; background: #e8f7ee; }
+    .stance-chip.penalized { color: #b42318; background: #fdecec; }
+    .stance-chip.neutral { color: #66726b; background: #f6f3ea; }
+    .stance-chip.warming_up { color: #9a6700; background: #fff4d6; }
     .since-panel { padding: 28px; }
     .since-panel h2 { font-size: 30px; margin-top: 0; display: inline; background: #d8e8fb; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
     .since-panel .muted { display: inline-block; margin: 22px 0 26px; font-size: 20px; font-weight: bold; background: #d8e8fb; }
@@ -93,6 +98,105 @@
             <p class="muted" style="margin: 8px 0 0;">Max duration: {{ row.max_trade_duration_days }} days</p>
           </div>
           {% endfor %}
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Learning Model</h2>
+        <div class="grid">
+          <div>
+            <h3>Favored Slices</h3>
+            <div class="table-wrap">
+              <table class="compact-table">
+                <thead>
+                  <tr>
+                    <th>Slice</th>
+                    <th>Score</th>
+                    <th>Win Rate</th>
+                    <th>Avg R</th>
+                    <th>Trades</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in learning_model_favored %}
+                  <tr>
+                    <td><span class="muted">{{ row.category }}</span><br>{{ row.slice }}</td>
+                    <td><span class="stance-chip {{ row.stance }}">{{ row.model_score }}</span></td>
+                    <td>{{ row.win_rate }}%</td>
+                    <td>{{ row.avg_R }}</td>
+                    <td>{{ row.trades }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="5" class="muted">No favored slices with enough sample yet.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <h3>Penalized Slices</h3>
+            <div class="table-wrap">
+              <table class="compact-table">
+                <thead>
+                  <tr>
+                    <th>Slice</th>
+                    <th>Score</th>
+                    <th>Win Rate</th>
+                    <th>Avg R</th>
+                    <th>Trades</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in learning_model_penalized %}
+                  <tr>
+                    <td><span class="muted">{{ row.category }}</span><br>{{ row.slice }}</td>
+                    <td><span class="stance-chip {{ row.stance }}">{{ row.model_score }}</span></td>
+                    <td>{{ row.win_rate }}%</td>
+                    <td>{{ row.avg_R }}</td>
+                    <td>{{ row.trades }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="5" class="muted">No penalized slices with enough sample yet.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <h3>All Learned Slices</h3>
+        <div class="table-wrap">
+          <table class="wide-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Slice</th>
+                <th>Stance</th>
+                <th>Model Score</th>
+                <th>Win Rate</th>
+                <th>Avg R</th>
+                <th>Wins</th>
+                <th>Trades</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in learning_model_rows %}
+              <tr>
+                <td>{{ row.category }}</td>
+                <td>{{ row.slice }}</td>
+                <td><span class="stance-chip {{ row.stance }}">{{ row.stance | replace("_", " ") | title }}</span></td>
+                <td>{{ row.model_score }}</td>
+                <td>{{ row.win_rate }}%</td>
+                <td>{{ row.avg_R }}</td>
+                <td>{{ row.wins }}</td>
+                <td>{{ row.trades }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="8" class="muted">No closed trades with model feedback yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
       </div>
 

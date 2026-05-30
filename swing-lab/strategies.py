@@ -159,6 +159,27 @@ def _score_components(
     }
 
 
+def _feature_snapshot(
+    price: float,
+    ema20: float,
+    ema50: float,
+    current_rsi: float | None,
+    average_volume: float,
+    volume: float,
+    market_alignment: int,
+) -> dict[str, float | int | None]:
+    ema_gap_pct = ((ema20 - ema50) / price) if price else 0
+    distance_ema20_pct = (abs(price - ema20) / price) if price else 0
+    volume_ratio = (volume / average_volume) if average_volume else 1
+    return {
+        "rsi": round(current_rsi, 2) if current_rsi is not None else None,
+        "ema_gap_pct": round(ema_gap_pct, 5),
+        "distance_ema20_pct": round(distance_ema20_pct, 5),
+        "volume_ratio": round(volume_ratio, 3),
+        "market_alignment": market_alignment,
+    }
+
+
 def evaluate_trend_pullback(
     bars: list[dict[str, Any]],
     asset: str,
@@ -250,6 +271,7 @@ def evaluate_trend_pullback(
         breakout=False,
         setup_type="pullback",
     )
+    average_volume = sum(volumes[-20:]) / 20
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
     return {
@@ -263,7 +285,19 @@ def evaluate_trend_pullback(
         "R_multiple": round((target - price) / risk, 2),
         "score": int(min(total_score, 100)),
         "setup_notes": f"RSI {rsi_value:.1f}, EMA20 support, risk {risk:.2f}",
-        "components": components | {"market_alignment": market_alignment},
+        "components": components
+        | {
+            "market_alignment": market_alignment,
+            "features": _feature_snapshot(
+                price=price,
+                ema20=ema20_value,
+                ema50=ema50_value,
+                current_rsi=rsi_value,
+                average_volume=average_volume,
+                volume=volumes[-1],
+                market_alignment=market_alignment,
+            ),
+        },
     }
 
 
@@ -341,7 +375,19 @@ def evaluate_breakout(
         "R_multiple": round((target - price) / risk, 2),
         "score": int(min(total_score, 100)),
         "setup_notes": f"20-bar breakout, volume expansion, risk {risk:.2f}",
-        "components": components | {"market_alignment": market_alignment},
+        "components": components
+        | {
+            "market_alignment": market_alignment,
+            "features": _feature_snapshot(
+                price=price,
+                ema20=ema20_series[-1],
+                ema50=ema50_series[-1],
+                current_rsi=rsi_series[-1],
+                average_volume=avg_volume,
+                volume=volumes[-1],
+                market_alignment=market_alignment,
+            ),
+        },
     }
 
 
@@ -417,6 +463,7 @@ def evaluate_bearish_pullback(
         direction="bearish",
         setup_type="pullback",
     )
+    average_volume = sum(volumes[-20:]) / 20
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
     return {
@@ -430,7 +477,19 @@ def evaluate_bearish_pullback(
         "R_multiple": round((price - target) / risk, 2),
         "score": int(min(total_score, 100)),
         "setup_notes": f"RSI {rsi_value:.1f}, EMA20 resistance, risk {risk:.2f}",
-        "components": components | {"market_alignment": market_alignment},
+        "components": components
+        | {
+            "market_alignment": market_alignment,
+            "features": _feature_snapshot(
+                price=price,
+                ema20=ema20_value,
+                ema50=ema50_value,
+                current_rsi=rsi_value,
+                average_volume=average_volume,
+                volume=volumes[-1],
+                market_alignment=market_alignment,
+            ),
+        },
     }
 
 
@@ -510,5 +569,17 @@ def evaluate_breakdown(
         "R_multiple": round((price - target) / risk, 2),
         "score": int(min(total_score, 100)),
         "setup_notes": f"20-bar breakdown, volume expansion, risk {risk:.2f}",
-        "components": components | {"market_alignment": market_alignment},
+        "components": components
+        | {
+            "market_alignment": market_alignment,
+            "features": _feature_snapshot(
+                price=price,
+                ema20=ema20_series[-1],
+                ema50=ema50_series[-1],
+                current_rsi=current_rsi,
+                average_volume=avg_volume,
+                volume=volumes[-1],
+                market_alignment=market_alignment,
+            ),
+        },
     }

@@ -12,6 +12,8 @@ from config import (
     CRYPTO_REQUEST_DELAY_SECONDS,
     CRYPTO_SYMBOL_TO_KRAKEN_PAIR,
     KRAKEN_OHLC_URL,
+    LEARNING_MODEL_ENABLED,
+    LEARNING_MODEL_WEIGHT,
     MAX_TRADES_PER_DAY,
     MIN_R_MULTIPLE,
     MIN_SCORE,
@@ -24,6 +26,7 @@ from config import (
     strategy_enabled,
 )
 from db import execute, fetch_one
+from learning_model import score_setup
 from strategies import (
     detect_bearish_market_alignment,
     detect_market_alignment,
@@ -271,6 +274,7 @@ def scan_market(
         "filtered_by_score": 0,
         "filtered_by_r": 0,
         "filtered_by_score_and_r": 0,
+        "filtered_by_learning_model": 0,
     }
     rule_failures: dict[str, int] = {}
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
@@ -351,10 +355,24 @@ def scan_market(
                         continue
                     trade["correlation_group"] = get_correlation_group(asset, asset_class)
                     trade["regime"] = regime
+                    trade["model_feedback"] = score_setup(trade) if LEARNING_MODEL_ENABLED else None
+                    if trade["model_feedback"]:
+                        model_weight = max(0.0, min(1.0, LEARNING_MODEL_WEIGHT))
+                        trade["combined_score"] = int(
+                            round((trade["score"] * (1 - model_weight)) + (trade["model_feedback"]["model_score"] * model_weight))
+                        )
+                        trade["components"] = trade.get("components", {}) | {
+                            "rule_score": trade["score"],
+                            "combined_score": trade["combined_score"],
+                            "model_feedback": trade["model_feedback"],
+                        }
+                    else:
+                        trade["combined_score"] = trade["score"]
                     matched_patterns += 1
                     score_ok = trade["score"] >= MIN_SCORE
                     r_ok = trade["R_multiple"] >= MIN_R_MULTIPLE
-                    if trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE:
+                    learning_ok = not trade["model_feedback"] or bool(trade["model_feedback"]["approved"])
+                    if trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE and learning_ok:
                         candidates.append(trade)
                         asset_candidates += 1
                         status = "candidate_found"
@@ -364,7 +382,9 @@ def scan_market(
                         if asset_candidates == 0:
                             status = "filtered_by_threshold"
                             note = "Pattern matched but score/R filter removed it"
-                        if not score_ok and not r_ok:
+                        if score_ok and r_ok and not learning_ok:
+                            rejection_counts["filtered_by_learning_model"] += 1
+                        elif not score_ok and not r_ok:
                             rejection_counts["filtered_by_score_and_r"] += 1
                         elif not score_ok:
                             rejection_counts["filtered_by_score"] += 1
@@ -378,9 +398,11 @@ def scan_market(
                                 "timeframe": trade["timeframe"],
                                 "score": trade["score"],
                                 "R_multiple": trade["R_multiple"],
+                                "combined_score": trade["combined_score"],
+                                "model_feedback": trade["model_feedback"],
                                 "entry_price": trade["entry_price"],
                                 "target_price": trade["target_price"],
-                                "note": "Rejected by score and/or R filter",
+                                "note": "Rejected by score, R, and/or learning filter",
                             }
                         )
             if matched_patterns == 0:
@@ -401,8 +423,8 @@ def scan_market(
                     "top_failure": asset_rule_failures.most_common(1)[0][0] if asset_rule_failures else "none",
                 }
             )
-    candidates.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
-    near_misses.sort(key=lambda item: (item["score"], item["R_multiple"]), reverse=True)
+    candidates.sort(key=lambda item: (item["combined_score"], item["score"], item["R_multiple"]), reverse=True)
+    near_misses.sort(key=lambda item: (item["combined_score"], item["score"], item["R_multiple"]), reverse=True)
     return candidates[:MAX_TRADES_PER_DAY], diagnostics, near_misses[:10], rejection_counts | {"rule_failures": rule_failures}
 
 
