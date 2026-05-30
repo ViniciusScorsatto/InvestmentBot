@@ -98,7 +98,8 @@
             No pattern: {{ system_status.runtime.last_scan_rejections.no_pattern_match }} |
             Score only: {{ system_status.runtime.last_scan_rejections.filtered_by_score }} |
             R only: {{ system_status.runtime.last_scan_rejections.filtered_by_r }} |
-            Both: {{ system_status.runtime.last_scan_rejections.filtered_by_score_and_r }}
+            Both: {{ system_status.runtime.last_scan_rejections.filtered_by_score_and_r }} |
+            Learning: {{ system_status.runtime.last_scan_rejections.filtered_by_learning_model | default(0) }}
           </div>
           <div class="muted">
             Top blockers:

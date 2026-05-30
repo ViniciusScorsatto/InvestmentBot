@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,6 +21,7 @@ from trades import enrich_trade_for_display, get_trade, list_trades
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 router = APIRouter()
+LOGGER = logging.getLogger(__name__)
 
 
 @router.get("/healthz")
@@ -96,7 +99,11 @@ def analytics_page(
         start_date = LAST_STRATEGY_CHANGE_AT[:10]
     filtered = analytics_payload(start_date=start_date, end_date=end_date)
     since_change = analytics_since_strategy_change()
-    learning_rows = learning_model_rows()
+    try:
+        learning_rows = learning_model_rows()
+    except Exception as exc:
+        LOGGER.exception("Failed to build learning model analytics")
+        learning_rows = []
     return templates.TemplateResponse(
         request,
         "analytics.html",
@@ -120,7 +127,11 @@ def analytics_page(
 
 @router.get("/analytics/learning")
 def learning_model_payload() -> JSONResponse:
-    rows = learning_model_rows()
+    try:
+        rows = learning_model_rows()
+    except Exception as exc:
+        LOGGER.exception("Failed to build learning model payload")
+        return JSONResponse({"favored": [], "penalized": [], "all": [], "error": str(exc)}, status_code=500)
     return JSONResponse(
         {
             "favored": [row for row in rows if row["stance"] == "favored"],

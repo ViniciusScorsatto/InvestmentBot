@@ -32,9 +32,11 @@ def _metadata(row: dict[str, Any]) -> dict[str, Any]:
     raw = row.get("metadata_json")
     if not raw:
         return {}
+    if isinstance(raw, dict):
+        return raw
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
 
@@ -42,7 +44,10 @@ def _metadata(row: dict[str, Any]) -> dict[str, Any]:
 def _feature_bucket(value: float | int | None, edges: tuple[float, ...]) -> str:
     if value is None:
         return "unknown"
-    numeric = float(value)
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
     for edge in edges:
         if numeric <= edge:
             return f"<= {edge:g}"
@@ -70,9 +75,16 @@ def _candidate_keys(setup: dict[str, Any]) -> list[tuple[str, ...]]:
         (
             "ema_gap_bucket",
             setup["strategy"],
-            _feature_bucket(abs(float(features.get("ema_gap_pct") or 0)), (0.005, 0.015, 0.03, 0.06)),
+            _feature_bucket(abs(_safe_float(features.get("ema_gap_pct"))), (0.005, 0.015, 0.03, 0.06)),
         ),
     ]
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _closed_trade_rows() -> list[dict[str, Any]]:
@@ -120,7 +132,7 @@ def learned_stats() -> dict[tuple[str, ...], SliceStats]:
                     (
                         "ema_gap_bucket",
                         row["strategy"],
-                        _feature_bucket(abs(float(features.get("ema_gap_pct") or 0)), (0.005, 0.015, 0.03, 0.06)),
+                        _feature_bucket(abs(_safe_float(features.get("ema_gap_pct"))), (0.005, 0.015, 0.03, 0.06)),
                     ),
                 ]
             )
