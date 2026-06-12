@@ -363,6 +363,55 @@ class StrategyAdjustmentTests(unittest.TestCase):
         self.assertFalse(feedback["approved"])
         self.assertLess(feedback["model_score"], 45)
 
+    def test_learning_model_reads_postgres_folded_result_column(self) -> None:
+        rows = [
+            {
+                "asset": "AAPL",
+                "asset_class": "stock",
+                "strategy": "Breakout",
+                "timeframe": "4h",
+                "result_r": -1.0,
+                "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
+            }
+            for _ in range(8)
+        ]
+
+        learning_model.clear_learning_cache()
+        with patch.object(learning_model, "fetch_all", return_value=rows):
+            stats = learning_model.learned_stats()
+            feedback = learning_model.score_setup(
+                {
+                    "asset": "AAPL",
+                    "asset_class": "stock",
+                    "strategy": "Breakout",
+                    "timeframe": "4h",
+                    "components": {"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}},
+                }
+            )
+        learning_model.clear_learning_cache()
+
+        self.assertEqual(stats[("all",)].trades, 8)
+        self.assertEqual(feedback["confidence"], "active")
+        self.assertFalse(feedback["approved"])
+
+    def test_trade_rows_normalize_folded_r_columns(self) -> None:
+        trade = trades._row_to_trade(
+            {
+                "asset": "AAPL",
+                "asset_class": "stock",
+                "strategy": "Breakout",
+                "timeframe": "4h",
+                "date_opened": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "r_multiple": 3.0,
+                "result_r": 1.2,
+                "partial_result_r": 0.5,
+            }
+        )
+
+        self.assertEqual(trade["R_multiple"], 3.0)
+        self.assertEqual(trade["result_R"], 1.2)
+        self.assertEqual(trade["partial_result_R"], 0.5)
+
     def test_scanner_rejects_candidate_when_learning_model_disapproves(self) -> None:
         dataset = {"4h": make_bars(), "1d": make_bars()}
 
@@ -404,6 +453,42 @@ class StrategyAdjustmentTests(unittest.TestCase):
         self.assertEqual(candidates, [])
         self.assertEqual(rejection_counts["filtered_by_learning_model"], 7)
         self.assertTrue(all(item["model_feedback"]["approved"] is False for item in near_misses))
+
+    def test_scanner_allows_candidate_when_learning_model_errors(self) -> None:
+        dataset = {"4h": make_bars(), "1d": make_bars()}
+
+        def fake_breakout(
+            bars: list[dict[str, object]],
+            asset: str,
+            asset_class: str,
+            timeframe: str,
+            market_alignment: int,
+            **_: object,
+        ) -> dict[str, object]:
+            return {
+                "asset": asset,
+                "asset_class": asset_class,
+                "strategy": "Breakout",
+                "timeframe": timeframe,
+                "entry_price": 100.0,
+                "stop_loss": 95.0,
+                "target_price": 115.0,
+                "R_multiple": 3.0,
+                "score": 82,
+                "components": {"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}},
+            }
+
+        with patch.object(scanner, "_regime_by_asset_class", return_value={"stock": "bullish"}), patch.object(
+            scanner, "fetch_asset_data", return_value=dataset
+        ), patch.object(scanner, "LONG_EVALUATORS", (("Breakout", fake_breakout),)), patch.object(
+            scanner, "score_setup", side_effect=KeyError("result_R")
+        ):
+            candidates, _, _, rejection_counts = scanner.scan_market(asset_classes=["stock"])
+
+        self.assertEqual(len(candidates), 5)
+        self.assertEqual(rejection_counts["filtered_by_learning_model"], 0)
+        self.assertTrue(all(candidate["model_feedback"]["approved"] for candidate in candidates))
+        self.assertTrue(all(candidate["model_feedback"]["confidence"] == "unavailable" for candidate in candidates))
 
     def test_learning_model_payload_groups_stances(self) -> None:
         rows = [

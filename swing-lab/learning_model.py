@@ -91,7 +91,7 @@ def _closed_trade_rows() -> list[dict[str, Any]]:
     try:
         return fetch_all(
             """
-            SELECT asset, asset_class, strategy, timeframe, result_R, metadata_json
+            SELECT asset, asset_class, strategy, timeframe, result_R AS "result_R", metadata_json
             FROM trades
             WHERE status != 'open' AND result_R IS NOT NULL
             ORDER BY id ASC
@@ -105,33 +105,46 @@ def _append(stats: dict[tuple[str, ...], list[float]], key: tuple[str, ...], res
     stats.setdefault(key, []).append(result_r)
 
 
+def _row_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row:
+            return row[key]
+    return None
+
+
 @lru_cache(maxsize=1)
 def learned_stats() -> dict[tuple[str, ...], SliceStats]:
     raw_stats: dict[tuple[str, ...], list[float]] = {}
     for row in _closed_trade_rows():
-        result_r = float(row["result_R"])
+        result_value = _row_value(row, "result_R", "result_r")
+        if result_value is None:
+            continue
+        result_r = float(result_value)
         metadata = _metadata(row)
         features = metadata.get("features") if isinstance(metadata.get("features"), dict) else {}
-        direction = get_trade_direction(row["strategy"])
+        strategy = str(_row_value(row, "strategy") or "")
+        timeframe = str(_row_value(row, "timeframe") or "")
+        asset_class = str(_row_value(row, "asset_class") or "")
+        direction = get_trade_direction(strategy)
         keys = [
             ("all",),
-            ("strategy", row["strategy"]),
-            ("strategy_timeframe", row["strategy"], row["timeframe"]),
-            ("asset_class_strategy", row["asset_class"], row["strategy"]),
-            ("direction_asset_class", direction, row["asset_class"]),
+            ("strategy", strategy),
+            ("strategy_timeframe", strategy, timeframe),
+            ("asset_class_strategy", asset_class, strategy),
+            ("direction_asset_class", direction, asset_class),
         ]
         if features:
             keys.extend(
                 [
-                    ("rsi_bucket", row["strategy"], _feature_bucket(features.get("rsi"), (40, 50, 60, 70))),
+                    ("rsi_bucket", strategy, _feature_bucket(features.get("rsi"), (40, 50, 60, 70))),
                     (
                         "volume_bucket",
-                        row["strategy"],
+                        strategy,
                         _feature_bucket(features.get("volume_ratio"), (0.8, 1.0, 1.2, 1.5)),
                     ),
                     (
                         "ema_gap_bucket",
-                        row["strategy"],
+                        strategy,
                         _feature_bucket(abs(_safe_float(features.get("ema_gap_pct"))), (0.005, 0.015, 0.03, 0.06)),
                     ),
                 ]

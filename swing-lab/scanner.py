@@ -53,6 +53,25 @@ SHORT_EVALUATORS = (
 )
 
 
+def _learning_feedback_for_trade(trade: dict[str, Any]) -> dict[str, Any] | None:
+    if not LEARNING_MODEL_ENABLED:
+        return None
+    try:
+        return score_setup(trade)
+    except Exception as exc:
+        LOGGER.exception("Learning model scoring failed for %s %s", trade.get("asset"), trade.get("strategy"))
+        return {
+            "model_score": 50,
+            "learned_win_rate": 50.0,
+            "learned_avg_R": 0.0,
+            "sample_size": 0,
+            "confidence": "unavailable",
+            "approved": True,
+            "min_score": None,
+            "error": str(exc),
+        }
+
+
 def _to_iso(timestamp: int | float | str) -> str:
     return datetime.fromtimestamp(int(float(timestamp)), tz=timezone.utc).isoformat()
 
@@ -355,7 +374,7 @@ def scan_market(
                         continue
                     trade["correlation_group"] = get_correlation_group(asset, asset_class)
                     trade["regime"] = regime
-                    trade["model_feedback"] = score_setup(trade) if LEARNING_MODEL_ENABLED else None
+                    trade["model_feedback"] = _learning_feedback_for_trade(trade)
                     if trade["model_feedback"]:
                         model_weight = max(0.0, min(1.0, LEARNING_MODEL_WEIGHT))
                         trade["combined_score"] = int(

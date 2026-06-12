@@ -40,6 +40,13 @@ def _coerce_datetime(value: Any) -> datetime:
 
 def _row_to_trade(row: Any) -> dict[str, Any]:
     trade = dict(row)
+    for canonical, folded in (
+        ("R_multiple", "r_multiple"),
+        ("result_R", "result_r"),
+        ("partial_result_R", "partial_result_r"),
+    ):
+        if canonical not in trade and folded in trade:
+            trade[canonical] = trade[folded]
     metadata_json = trade.get("metadata_json")
     trade["metadata"] = json.loads(metadata_json) if metadata_json else {}
     for key in ("date_opened", "date_closed", "partial_taken_at", "runner_activated_at"):
