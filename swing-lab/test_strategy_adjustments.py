@@ -334,7 +334,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         self.assertEqual(response, "ok")
         self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-05-30")
 
-    def test_learning_model_blocks_repeated_bad_slice(self) -> None:
+    def test_learning_model_does_not_block_until_specific_slice_has_enough_sample(self) -> None:
         rows = [
             {
                 "asset": "AAPL",
@@ -360,8 +360,69 @@ class StrategyAdjustmentTests(unittest.TestCase):
         learning_model.clear_learning_cache()
 
         self.assertEqual(feedback["confidence"], "active")
-        self.assertFalse(feedback["approved"])
+        self.assertTrue(feedback["approved"])
         self.assertLess(feedback["model_score"], 45)
+        self.assertEqual(feedback["blocking_slices"], [])
+
+    def test_learning_model_blocks_specific_negative_slice_after_block_sample(self) -> None:
+        rows = [
+            {
+                "asset": "AAPL",
+                "asset_class": "stock",
+                "strategy": "Breakout",
+                "timeframe": "4h",
+                "result_R": -1.0,
+                "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
+            }
+            for _ in range(16)
+        ]
+
+        learning_model.clear_learning_cache()
+        with patch.object(learning_model, "fetch_all", return_value=rows):
+            feedback = learning_model.score_setup(
+                {
+                    "asset": "AAPL",
+                    "asset_class": "stock",
+                    "strategy": "Breakout",
+                    "timeframe": "4h",
+                    "components": {"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}},
+                }
+            )
+        learning_model.clear_learning_cache()
+
+        self.assertFalse(feedback["approved"])
+        self.assertEqual(feedback["min_score"], 45)
+        self.assertTrue(any(item["category"] == "Strategy Timeframe" for item in feedback["blocking_slices"]))
+
+    def test_learning_model_keeps_broad_strategy_penalty_advisory(self) -> None:
+        rows = [
+            {
+                "asset": "BTC",
+                "asset_class": "crypto",
+                "strategy": "Breakout",
+                "timeframe": "1d",
+                "result_R": -1.0,
+                "metadata_json": "",
+            }
+            for _ in range(20)
+        ]
+
+        learning_model.clear_learning_cache()
+        with patch.object(learning_model, "fetch_all", return_value=rows):
+            feedback = learning_model.score_setup(
+                {
+                    "asset": "AAPL",
+                    "asset_class": "stock",
+                    "strategy": "Breakout",
+                    "timeframe": "4h",
+                    "components": {},
+                }
+            )
+        learning_model.clear_learning_cache()
+
+        self.assertLess(feedback["model_score"], 45)
+        self.assertTrue(feedback["approved"])
+        self.assertEqual(feedback["blocking_slices"], [])
 
     def test_learning_model_reads_postgres_folded_result_column(self) -> None:
         rows = [
@@ -392,7 +453,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
 
         self.assertEqual(stats[("all",)].trades, 8)
         self.assertEqual(feedback["confidence"], "active")
-        self.assertFalse(feedback["approved"])
+        self.assertTrue(feedback["approved"])
 
     def test_trade_rows_normalize_folded_r_columns(self) -> None:
         trade = trades._row_to_trade(

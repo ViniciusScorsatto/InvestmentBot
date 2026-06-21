@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from config import LEARNING_MODEL_MIN_SAMPLE, LEARNING_MODEL_MIN_SCORE
+from config import LEARNING_MODEL_BLOCK_MIN_SAMPLE, LEARNING_MODEL_MIN_SAMPLE, LEARNING_MODEL_MIN_SCORE
 from db import fetch_all
 from trade_utils import get_trade_direction
 
@@ -13,6 +13,13 @@ from trade_utils import get_trade_direction
 PRIOR_TRADES = 6
 PRIOR_WIN_RATE = 0.5
 PRIOR_AVG_R = 0.0
+BLOCKING_KEY_TYPES = {
+    "strategy_timeframe",
+    "asset_class_strategy",
+    "rsi_bucket",
+    "volume_bucket",
+    "ema_gap_bucket",
+}
 
 
 @dataclass(frozen=True)
@@ -185,6 +192,25 @@ def _key_label(key: tuple[str, ...]) -> tuple[str, str]:
     return category, " / ".join(str(part) for part in key[1:])
 
 
+def _blocking_slice(key: tuple[str, ...], item: SliceStats) -> dict[str, Any] | None:
+    if key[0] not in BLOCKING_KEY_TYPES:
+        return None
+    if item.trades < LEARNING_MODEL_BLOCK_MIN_SAMPLE:
+        return None
+    model_score = _score_from_slice(item)
+    if model_score >= LEARNING_MODEL_MIN_SCORE or item.avg_r >= 0:
+        return None
+    category, label = _key_label(key)
+    return {
+        "category": category,
+        "slice": label,
+        "trades": item.trades,
+        "win_rate": round(item.win_rate * 100, 1),
+        "avg_R": item.avg_r,
+        "model_score": model_score,
+    }
+
+
 def learning_model_rows() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for key, item in learned_stats().items():
@@ -221,7 +247,8 @@ def learning_model_rows() -> list[dict[str, Any]]:
 def score_setup(setup: dict[str, Any]) -> dict[str, Any]:
     stats = learned_stats()
     global_stats = stats.get(("all",), SliceStats(trades=0, wins=0, avg_r=0))
-    matched = [item for key in _candidate_keys(setup) if (item := stats.get(key)) is not None]
+    matched_slices = [(key, item) for key in _candidate_keys(setup) if (item := stats.get(key)) is not None]
+    matched = [item for _, item in matched_slices]
 
     weighted_trades = PRIOR_TRADES
     weighted_wins = PRIOR_TRADES * PRIOR_WIN_RATE
@@ -240,7 +267,12 @@ def score_setup(setup: dict[str, Any]) -> dict[str, Any]:
     r_component = max(min(learned_avg_r, 1.5), -1.5) * 20
     model_score = int(round(max(0, min(100, 50 + win_component + r_component))))
     enough_sample = sample_size >= LEARNING_MODEL_MIN_SAMPLE
-    approved = (not enough_sample) or model_score >= LEARNING_MODEL_MIN_SCORE
+    blocking_slices = [
+        blocking_slice
+        for key, item in matched_slices
+        if (blocking_slice := _blocking_slice(key, item)) is not None
+    ]
+    approved = not blocking_slices
 
     return {
         "model_score": model_score,
@@ -249,5 +281,7 @@ def score_setup(setup: dict[str, Any]) -> dict[str, Any]:
         "sample_size": sample_size,
         "confidence": "active" if enough_sample else "warming_up",
         "approved": approved,
-        "min_score": LEARNING_MODEL_MIN_SCORE if enough_sample else None,
+        "min_score": LEARNING_MODEL_MIN_SCORE if sample_size >= LEARNING_MODEL_BLOCK_MIN_SAMPLE else None,
+        "block_min_sample": LEARNING_MODEL_BLOCK_MIN_SAMPLE,
+        "blocking_slices": blocking_slices,
     }
