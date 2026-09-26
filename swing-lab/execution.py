@@ -5,17 +5,18 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
-from config import SIM_FEE_BPS, SIM_SLIPPAGE_BPS, strategy_max_trade_duration_days
+from config import SIM_FEE_BPS, SIM_SLIPPAGE_BPS, MIN_ENTRY_NET_R, strategy_max_trade_duration_days
 from market_bars import as_datetime, next_hour_start
 from trade_utils import get_trade_direction
 
-EXECUTION_VERSION = 2
+EXECUTION_VERSION = 3
 
 
 def execution_settings(at: datetime, strategy: str, *, pending_entry: bool = True) -> dict[str, Any]:
     return {"version": EXECUTION_VERSION, "cursor": at.isoformat(),
             "pending_entry": pending_entry, "fee_bps": SIM_FEE_BPS,
             "slippage_bps": SIM_SLIPPAGE_BPS, "entry_fee_r": 0.0,
+            "min_entry_net_r": MIN_ENTRY_NET_R, "breakeven_at_r": 1.0,
             "max_duration_days": strategy_max_trade_duration_days(strategy), "events": []}
 
 
@@ -76,9 +77,34 @@ def replay_bars(original: dict[str, Any], bars: list[dict[str, Any]], now: datet
             break
         settings.pop("data_gap", None)
         if settings["pending_entry"]:
+            # Recheck the next-open date using only the frozen, observed calendar.
+            # This applies solely to the earnings experiment, never funded trades.
+            if snapshot := settings.get("earnings_filter"):
+                from earnings import earnings_snapshot
+                check = earnings_snapshot(trade["asset"], trade["asset_class"], start, {
+                    "source": snapshot.get("source"), "fetched_at": snapshot.get("fetched_at"),
+                    "events": {trade["asset"]: [snapshot.get("next_report_date")]}},
+                    blackout_days=snapshot.get("blackout_days", 2))
+                if check["status"] != "clear":
+                    trade.update(status="skipped" if check["status"] == "blocked" else "unavailable",
+                                 date_closed=start.isoformat(), experiment_reason="earnings_at_entry_" + check["status"])
+                    settings.update(pending_entry=False, cursor=end.isoformat())
+                    break
             fill = float(bar["open"]) * (1 + side(trade) * settings["slippage_bps"] / 10000)
             trade["entry_price"] = fill
-            if risk(trade) <= 0 or side(trade) * (trade["target_price"] - fill) <= 0:
+            fee = settings["fee_bps"] / 10000
+            stop_fill = exit_fill(trade, trade["stop_loss"])
+            reward = side(trade) * (trade["target_price"] - fill) - fee * (fill + trade["target_price"])
+            loss = side(trade) * (fill - stop_fill) + fee * (fill + stop_fill)
+            net_rr = reward / loss if loss > 0 else None
+            settings["entry_net_r"] = net_rr
+            invalid = risk(trade) <= 0 or side(trade) * (trade["target_price"] - fill) <= 0
+            if "min_entry_net_r" in settings:
+                invalid = invalid or reward <= 0 or loss <= 0
+            # Missing setting means a frozen pre-upgrade execution contract.
+            below_floor = "min_entry_net_r" in settings and net_rr is not None and net_rr < settings["min_entry_net_r"]
+            if invalid or below_floor:
+                settings["cancel_reason"] = "invalid_entry" if invalid else "entry_net_r_below_minimum"
                 trade.update(status="cancelled", date_closed=start.isoformat(), result_R=None)
                 settings.update(pending_entry=False, cursor=end.isoformat())
                 event("entry_cancelled", fill, start, 0)
@@ -116,7 +142,16 @@ def replay_bars(original: dict[str, Any], bars: list[dict[str, Any]], now: datet
                 trade.update(partial_taken=True, partial_taken_at=at.isoformat(),
                              partial_price=fill, partial_result_R=partial_r)
                 event("partial", fill, at, 0.5)
-            trade["effective_stop_loss"] = trade["entry_price"]
+            if settings.get("breakeven_at_r", 1.0) <= 1 and not settings.get("trailing_atr"):
+                trade["effective_stop_loss"] = trade["entry_price"]
+
+        def raise_breakeven(price: float) -> None:
+            if settings.get("trailing_atr") or settings.get("breakeven_at_r", 1.0) <= 1:
+                return
+            level = trade["entry_price"] + side(trade) * risk(trade) * settings.get("breakeven_at_r", 1.0)
+            if side(trade) * (price - level) >= 0:
+                current = trade.get("effective_stop_loss") or trade["stop_loss"]
+                trade["effective_stop_loss"] = max(current, trade["entry_price"]) if side(trade) == 1 else min(current, trade["entry_price"])
 
         # Opening prices establish chronology for gaps. Intrabar ordering is conservative:
         # the existing stop wins a stop/target tie, then a newly raised stop wins a tie.
@@ -130,12 +165,14 @@ def replay_bars(original: dict[str, Any], bars: list[dict[str, Any]], now: datet
         else:
             if side(trade) * (op - trigger) >= 0:
                 activate(start)
+            raise_breakeven(op)
             stop = trade.get("effective_stop_loss") or trade["stop_loss"]
             if side(trade) * (adverse - stop) <= 0:
                 close("stopped", stop, end)
             else:
                 if side(trade) * (favorable - trigger) >= 0:
                     activate(end)
+                raise_breakeven(favorable)
                 stop = trade.get("effective_stop_loss") or trade["stop_loss"]
                 if side(trade) * (adverse - stop) <= 0:
                     close("stopped", stop, end)
@@ -145,6 +182,11 @@ def replay_bars(original: dict[str, Any], bars: list[dict[str, Any]], now: datet
                     close("closed", float(bar["close"]), end)
                 else:
                     trade["current_price"] = float(bar["close"])
+        # A close-derived trailing stop applies only to the NEXT bar (no look-ahead).
+        if trade["status"] == "open" and settings.get("trailing_atr") and (trade.get("runner_activated") or trade.get("partial_taken")):
+            candidate = float(bar["close"]) - side(trade) * settings["trailing_atr"]
+            current = trade.get("effective_stop_loss") or trade["stop_loss"]
+            trade["effective_stop_loss"] = max(current, candidate) if side(trade) == 1 else min(current, candidate)
         settings["cursor"] = end.isoformat()
         cursor = end
         if trade["status"] != "open":

@@ -210,6 +210,7 @@ class ExecutionTests(unittest.TestCase):
 
     def test_gapped_entry_near_target_cannot_take_partial_beyond_target(self):
         trade=position("Trend Pullback",pending=True)
+        trade["metadata"]["execution"].pop("min_entry_net_r")  # Frozen pre-upgrade contract
         result=self.replay(trade,[bar(op=125,high=140,low=124,close=135)])
         self.assertEqual(result["status"],"target_hit")
         self.assertFalse(result["partial_taken"])
@@ -317,7 +318,8 @@ class LearningTests(unittest.TestCase):
         stats=learning_model.build_stats(rows)
         feedback=learning_model.score_setup(dict(rows[0],components=json.loads(rows[0]["metadata_json"])),stats)
         self.assertEqual(feedback["sample_size"],8)
-        self.assertEqual(feedback["model_score"],learning_model._score_from_slice(learning_model.SliceStats(8,8,1)))
+        self.assertEqual(feedback["model_score"],50)
+        self.assertEqual(feedback["confidence"],"warming_up")
 
     def test_warmup_does_not_penalize_candidates(self):
         rows=[history(result=-1) for _ in range(7)]
@@ -334,11 +336,11 @@ class LearningTests(unittest.TestCase):
         self.assertEqual(result["observed_baseline"]["total_R"],1)
         self.assertIn("not an unbiased",result["limitation"])
 
-    def test_walk_forward_negative_history_rejects_later_candidate(self):
+    def test_walk_forward_small_negative_history_is_advisory(self):
         rows=[history(-1,opened=T0+timedelta(days=i),closed=T0+timedelta(days=i,hours=1)) for i in range(17)]
         result=evaluation.walk_forward_evaluation(rows)
-        self.assertEqual(result["overlay_accepted"]["closed_trades"],16)
-        self.assertEqual(result["overlay_rejected"]["closed_trades"],1)
+        self.assertEqual(result["overlay_accepted"]["closed_trades"],17)
+        self.assertEqual(result["overlay_rejected"]["closed_trades"],0)
         self.assertEqual(result["decisions"][-1]["training_trades"],16)
 
     def test_failed_history_read_not_cached_as_empty(self):

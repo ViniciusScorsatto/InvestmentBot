@@ -13,11 +13,11 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-STRATEGY_VERSION = "portfolio-v1-signals-v1"
-LAST_STRATEGY_CHANGE_LABEL = "Portfolio and Signal Tracking Upgrade"
-LAST_STRATEGY_CHANGE_AT = "2026-09-26T00:00:00+12:00"
+STRATEGY_VERSION = "quality-v2-experiments-v1"
+LAST_STRATEGY_CHANGE_LABEL = "Entry Quality and Controlled Experiments"
+LAST_STRATEGY_CHANGE_AT = "2026-09-27T00:00:00+12:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Calendar-aware scans, unique signal tracking, funded portfolio limits, and rejected-setup simulation. "
+    "Cost-aware entry checks, session-normalized volume, conservative learning, and matched shadow experiments. "
     "Current-version results exclude legacy trades."
 )
 # Illustrative per-fill costs, frozen in each new trade; calibrate to the intended venue.
@@ -53,8 +53,8 @@ MIN_R_MULTIPLE = 2.0
 DEFAULT_MAX_TRADE_DURATION_DAYS = 10
 LEARNING_MODEL_ENABLED = os.getenv("SWING_LAB_LEARNING_MODEL_ENABLED", "true").lower() == "true"
 LEARNING_MODEL_WEIGHT = float(os.getenv("SWING_LAB_LEARNING_MODEL_WEIGHT", "0.35"))
-LEARNING_MODEL_MIN_SAMPLE = int(os.getenv("SWING_LAB_LEARNING_MODEL_MIN_SAMPLE", "8"))
-LEARNING_MODEL_BLOCK_MIN_SAMPLE = int(os.getenv("SWING_LAB_LEARNING_MODEL_BLOCK_MIN_SAMPLE", "16"))
+LEARNING_MODEL_MIN_SAMPLE = int(os.getenv("SWING_LAB_LEARNING_MODEL_MIN_SAMPLE", "30"))
+LEARNING_MODEL_BLOCK_MIN_SAMPLE = int(os.getenv("SWING_LAB_LEARNING_MODEL_BLOCK_MIN_SAMPLE", "60"))
 LEARNING_MODEL_MIN_SCORE = int(os.getenv("SWING_LAB_LEARNING_MODEL_MIN_SCORE", "45"))
 
 STRATEGY_SETTINGS = {
@@ -180,3 +180,14 @@ def strategy_status_rows() -> list[dict[str, object]]:
             }
         )
     return rows
+
+# A 2R gross pullback needs room for fees/slippage; cancel below 1.8 net payoff/risk.
+MIN_ENTRY_NET_R = float(os.getenv("SWING_LAB_MIN_ENTRY_NET_R", "1.8"))
+LEARNING_MODEL_MIN_WEEKS = 4
+EARNINGS_CALENDAR_PATH = os.getenv("SWING_LAB_EARNINGS_CALENDAR_PATH", "")
+EARNINGS_API_KEY = os.getenv("SWING_LAB_EARNINGS_API_KEY", "")
+EARNINGS_BLACKOUT_DAYS = 2
+if not 0 < MIN_ENTRY_NET_R <= 10:
+    raise ValueError("Entry net reward/risk must be finite and in (0, 10]")
+if LEARNING_MODEL_MIN_SAMPLE < 30 or LEARNING_MODEL_BLOCK_MIN_SAMPLE < max(60, LEARNING_MODEL_MIN_SAMPLE):
+    raise ValueError("Learning requires at least 30 ranking and 60 blocking observations")

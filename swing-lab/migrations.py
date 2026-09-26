@@ -80,3 +80,12 @@ def upgrade(connection):
         )
     """)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_outbox_pending ON notification_outbox(next_attempt_at) WHERE sent_at IS NULL")
+
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS signal_experiments (
+            signal_id TEXT NOT NULL REFERENCES signals(signal_id), variant TEXT NOT NULL,
+            definition JSONB NOT NULL, state JSONB NOT NULL,
+            status TEXT NOT NULL, PRIMARY KEY(signal_id, variant)
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_experiments_active ON signal_experiments(signal_id) WHERE status IN ('open','monitoring')")

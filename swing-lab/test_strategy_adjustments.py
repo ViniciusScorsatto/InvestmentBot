@@ -147,7 +147,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         with patch.object(strategies, "ema", side_effect=fake_ema), patch.object(strategies, "rsi", return_value=[60.0] * len(bars)), patch.object(
             strategies, "sma", return_value=[100.0] * len(bars)
         ):
-            trade = strategies.evaluate_breakout(bars, "AAPL", "stock", "4h", 20)
+            trade = strategies.evaluate_breakout(bars, "BTC", "crypto", "4h", 20)
 
         self.assertIsNotNone(trade)
         self.assertEqual(trade["target_price"], 130.0)
@@ -184,8 +184,8 @@ class StrategyAdjustmentTests(unittest.TestCase):
             response = api.analytics_page(request=object(), start_date=None, end_date=None)
 
         self.assertEqual(response, "ok")
-        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-25")
-        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "portfolio-v1-signals-v1")
+        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-26")
+        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "quality-v2-experiments-v1")
 
     def test_learning_model_does_not_block_until_specific_slice_has_enough_sample(self) -> None:
         rows = [
@@ -194,10 +194,11 @@ class StrategyAdjustmentTests(unittest.TestCase):
                 "asset_class": "stock",
                 "strategy": "Breakout",
                 "timeframe": "4h",
+                "date_closed": (datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(weeks=i//8)).isoformat(),
                 "result_R": -1.0,
                 "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
             }
-            for _ in range(8)
+            for i in range(8)
         ]
         setup = {
             "asset": "AAPL",
@@ -212,9 +213,9 @@ class StrategyAdjustmentTests(unittest.TestCase):
             feedback = learning_model.score_setup(setup)
         learning_model.clear_learning_cache()
 
-        self.assertEqual(feedback["confidence"], "active")
+        self.assertEqual(feedback["confidence"], "warming_up")
         self.assertTrue(feedback["approved"])
-        self.assertLess(feedback["model_score"], 45)
+        self.assertEqual(feedback["model_score"], 50)
         self.assertEqual(feedback["blocking_slices"], [])
 
     def test_learning_model_blocks_specific_negative_slice_after_block_sample(self) -> None:
@@ -224,10 +225,11 @@ class StrategyAdjustmentTests(unittest.TestCase):
                 "asset_class": "stock",
                 "strategy": "Breakout",
                 "timeframe": "4h",
+                "date_closed": (datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(weeks=i//8)).isoformat(),
                 "result_R": -1.0,
                 "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
             }
-            for _ in range(16)
+            for i in range(64)
         ]
 
         learning_model.clear_learning_cache()
@@ -245,7 +247,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
 
         self.assertFalse(feedback["approved"])
         self.assertEqual(feedback["min_score"], 45)
-        self.assertTrue(any(item["category"] == "Strategy Timeframe" for item in feedback["blocking_slices"]))
+        self.assertTrue(any(item["category"] == "Setup Slice" for item in feedback["blocking_slices"]))
 
     def test_learning_model_keeps_broad_strategy_penalty_advisory(self) -> None:
         rows = [
@@ -254,10 +256,11 @@ class StrategyAdjustmentTests(unittest.TestCase):
                 "asset_class": "crypto",
                 "strategy": "Breakout",
                 "timeframe": "1d",
+                "date_closed": (datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(weeks=i//8)).isoformat(),
                 "result_R": -1.0,
                 "metadata_json": "",
             }
-            for _ in range(20)
+            for i in range(64)
         ]
 
         learning_model.clear_learning_cache()
@@ -284,10 +287,11 @@ class StrategyAdjustmentTests(unittest.TestCase):
                 "asset_class": "stock",
                 "strategy": "Breakout",
                 "timeframe": "4h",
+                "date_closed": (datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(weeks=i//8)).isoformat(),
                 "result_r": -1.0,
                 "metadata_json": '{"features": {"rsi": 62, "volume_ratio": 1.3, "ema_gap_pct": 0.02}}',
             }
-            for _ in range(8)
+            for i in range(8)
         ]
 
         learning_model.clear_learning_cache()
@@ -305,7 +309,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         learning_model.clear_learning_cache()
 
         self.assertEqual(stats[("all",)].trades, 8)
-        self.assertEqual(feedback["confidence"], "active")
+        self.assertEqual(feedback["confidence"], "warming_up")
         self.assertTrue(feedback["approved"])
 
     def test_trade_rows_normalize_folded_r_columns(self) -> None:

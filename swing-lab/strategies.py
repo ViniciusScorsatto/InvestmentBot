@@ -1,7 +1,59 @@
 from __future__ import annotations
 
 from collections import Counter
+import math
+
+from market_bars import as_datetime, session_bounds, NY
 from typing import Any
+
+
+def atr(bars: list[dict[str, Any]], period: int = 14) -> float | None:
+    """Wilder ATR on completed signal-timeframe bars, including overnight gaps."""
+    if len(bars) < period + 1:
+        return None
+    ranges = [max(float(b["high"]) - float(b["low"]),
+                  abs(float(b["high"]) - float(prev["close"])),
+                  abs(float(b["low"]) - float(prev["close"])))
+              for prev, b in zip(bars, bars[1:])]
+    value = sum(ranges[:period]) / period
+    for value_range in ranges[period:]:
+        value = (value * (period - 1) + value_range) / period
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def volume_baseline(bars, asset_class, timeframe):
+    """Prior observations only; equities match session offset AND bar duration."""
+    if len(bars) < 21:
+        return None
+    try:
+        signal_volume = float(bars[-1]["volume"])
+        if not math.isfinite(signal_volume) or signal_volume < 0:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    previous = bars[:-1]
+    if asset_class in ("stock", "etf"):
+        def segment(bar):
+            try:
+                start, end = as_datetime(bar["timestamp"]), as_datetime(bar["end_timestamp"])
+                bounds = session_bounds(start.astimezone(NY).date().isoformat())
+                if not bounds or not bounds[0] <= start < end <= bounds[1]:
+                    return None
+                return ((start - bounds[0]).total_seconds(), (end - start).total_seconds())
+            except (ValueError, KeyError, TypeError):
+                return None
+        key = segment(bars[-1])
+        if key is None:
+            return None
+        previous = [b for b in previous if segment(b) == key]
+    try:
+        sample = [float(b["volume"]) for b in previous[-20:]]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(sample) < 10 or any(not math.isfinite(v) or v < 0 for v in sample):
+        return None
+    mean = sum(sample) / len(sample)
+    return mean if mean > 0 else None
 
 
 def ema(values: list[float], period: int) -> list[float]:
@@ -261,17 +313,21 @@ def evaluate_trend_pullback(
         return None
     target = price + (2 * risk)
 
+    average_volume = volume_baseline(bars, asset_class, timeframe)
+    if average_volume is None:
+        if debug_counter is not None:
+            debug_counter["volume_comparable_history_missing"] += 1
+        return None
     components = _score_components(
         price=price,
         ema20=ema20_value,
         ema50=ema50_value,
         current_rsi=rsi_value,
-        average_volume=sum(volumes[-20:]) / 20,
+        average_volume=average_volume,
         volume=volumes[-1],
         breakout=False,
         setup_type="pullback",
     )
-    average_volume = sum(volumes[-20:]) / 20
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
     return {
@@ -321,12 +377,15 @@ def evaluate_breakout(
     ema20_series = ema(closes, 20)
     ema50_series = ema(closes, 50)
     rsi_series = rsi(closes, 14)
-    avg_volume_series = sma(volumes, 20)
 
     price = closes[-1]
     prior_20_high = max(highs[-21:-1])
     recent_low = min(lows[-5:])
-    avg_volume = avg_volume_series[-1] or volumes[-1]
+    avg_volume = volume_baseline(bars, asset_class, timeframe)
+    if avg_volume is None:
+        if debug_counter is not None:
+            debug_counter["volume_comparable_history_missing"] += 1
+        return None
     breakout = price > prior_20_high
     volume_above_average = volumes[-1] > avg_volume
     price_above_ema50 = price > ema50_series[-1]
@@ -452,18 +511,22 @@ def evaluate_bearish_pullback(
         return None
     target = price - (2 * risk)
 
+    average_volume = volume_baseline(bars, asset_class, timeframe)
+    if average_volume is None:
+        if debug_counter is not None:
+            debug_counter["volume_comparable_history_missing"] += 1
+        return None
     components = _score_components(
         price=price,
         ema20=ema20_value,
         ema50=ema50_value,
         current_rsi=rsi_value,
-        average_volume=sum(volumes[-20:]) / 20,
+        average_volume=average_volume,
         volume=volumes[-1],
         breakout=False,
         direction="bearish",
         setup_type="pullback",
     )
-    average_volume = sum(volumes[-20:]) / 20
     total_score = components["trend"] + components["momentum"] + components["setup_quality"] + market_alignment
 
     return {
@@ -513,12 +576,15 @@ def evaluate_breakdown(
     ema20_series = ema(closes, 20)
     ema50_series = ema(closes, 50)
     rsi_series = rsi(closes, 14)
-    avg_volume_series = sma(volumes, 20)
 
     price = closes[-1]
     prior_20_low = min(lows[-21:-1])
     recent_high = max(highs[-5:])
-    avg_volume = avg_volume_series[-1] or volumes[-1]
+    avg_volume = volume_baseline(bars, asset_class, timeframe)
+    if avg_volume is None:
+        if debug_counter is not None:
+            debug_counter["volume_comparable_history_missing"] += 1
+        return None
     breakdown = price < prior_20_low
     volume_above_average = volumes[-1] > avg_volume
     price_below_ema50 = price < ema50_series[-1]

@@ -54,6 +54,75 @@ class DatabaseTests(unittest.TestCase):
         with patch.object(trades,"_now_utc",return_value=now or T0+timedelta(hours=2)),patch.object(trades,"fetch_asset_data",return_value={"execution":bars}):
             return trades.update_open_trades()
 
+    def test_quality_gap_cancel_and_shadow_match_release_all_cash(self):
+        self.create([setup()])
+        bars=[bar(op=120,high=125,low=119)]
+        self.update(bars)
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":bars}):
+            signals.update_shadow_trades(T0+timedelta(hours=1))
+        account=db.fetch_one("SELECT * FROM portfolio_accounts")
+        self.assertEqual(float(account["cash"]),config.PORTFOLIO_INITIAL_CASH)
+        self.assertEqual(float(account["reserved_cash"]),0)
+        self.assertEqual(trades.list_trades()[0]["status"],"cancelled")
+        state=db.fetch_one("SELECT shadow_state FROM signals")["shadow_state"]
+        self.assertEqual(state["metadata"]["execution"]["cancel_reason"],"entry_net_r_below_minimum")
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM portfolio_ledger WHERE kind='entry'")["n"],0)
+
+    def test_experiments_are_atomic_frozen_and_idempotent(self):
+        import experiments
+        candidate=setup();candidate["components"]={"features":{"atr":4}}
+        self.create([candidate])
+        original=db.fetch_all("SELECT * FROM signal_experiments ORDER BY variant")
+        self.assertEqual(len(original),5)
+        candidate["components"]["features"]["atr"]=100
+        self.create([candidate])
+        db.initialize_db()
+        self.assertEqual(original,db.fetch_all("SELECT * FROM signal_experiments ORDER BY variant"))
+        other=setup("ETH")
+        with patch.object(experiments,"record_experiments",side_effect=RuntimeError("experiment write failed")):
+            with self.assertRaises(RuntimeError):self.create([other])
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM signals")["n"],1)
+
+    def test_experiment_replay_preserves_baseline_and_has_no_cash_effect(self):
+        import experiments
+        candidate=setup();candidate["components"]={"features":{"atr":4}}
+        self.create([candidate])
+        before=db.fetch_one("SELECT * FROM portfolio_accounts")
+        bars=[bar(op=105,high=118,low=104,close=116)]
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":bars}):
+            signals.update_shadow_trades(T0+timedelta(hours=1))
+            frozen=db.fetch_all("SELECT * FROM signal_experiments ORDER BY variant")
+            signals.update_shadow_trades(T0+timedelta(hours=1))
+        self.assertEqual(frozen,db.fetch_all("SELECT * FROM signal_experiments ORDER BY variant"))
+        self.assertEqual(before,db.fetch_one("SELECT * FROM portfolio_accounts"))
+        baseline=db.fetch_one("SELECT state FROM signal_experiments WHERE variant='baseline'")["state"]
+        shadow=db.fetch_one("SELECT shadow_state FROM signals")["shadow_state"]
+        self.assertEqual(baseline["result_R"],shadow["result_R"])
+        self.assertEqual(baseline["metadata"]["execution"],shadow["metadata"]["execution"])
+
+    def test_experiments_follow_stopped_baselines_after_shadow_closes(self):
+        import experiments
+        self.create([setup()])
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(low=80)]}):
+            signals.update_shadow_trades(T0+timedelta(hours=1))
+        self.assertEqual(db.fetch_one("SELECT status FROM signal_experiments WHERE variant='baseline'")["status"],"monitoring")
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(T0+timedelta(hours=1),high=140)]}):
+            signals.update_shadow_trades(T0+timedelta(hours=2))
+        row=next(r for r in experiments.experiment_report()["variants"] if r["variant"]=="baseline")
+        self.assertEqual(row["stops_later_reaching_target"],1)
+        self.assertEqual(row["stops_observed_to_resolution"],1)
+        self.assertEqual(row["stop_followups_pending"],0)
+
+    def test_earnings_experiment_coverage_is_visible_and_does_not_gate_portfolio(self):
+        import experiments
+        candidate=setup("AAPL","stock");candidate["components"]={"earnings":{"status":"blocked"}}
+        self.create([candidate,setup("MSFT","stock")])
+        self.assertEqual(len(trades.list_trades()),1)
+        row=next(r for r in experiments.experiment_report()["variants"] if r["variant"]=="earnings_blackout")
+        self.assertEqual(row["skipped"],1)
+        self.assertEqual(row["unavailable"],1)
+        self.assertEqual(row["matched_opportunities"],0)
+
     def test_migration_repeatable_without_resetting_cash(self):
         self.create([setup()]); self.update([bar()])
         before=db.fetch_one("SELECT * FROM portfolio_accounts")
@@ -154,7 +223,7 @@ class DatabaseTests(unittest.TestCase):
     def test_gap_entry_resizes_to_reserved_cash_and_risk(self):
         self.create([setup()])
         p=db.fetch_one("SELECT * FROM portfolio_positions")
-        self.update([bar(op=120,high=122,low=119,close=121)])
+        self.update([bar(op=102,high=104,low=101,close=103)])
         current=db.fetch_one("SELECT * FROM portfolio_positions")
         self.assertLess(current["quantity"],p["planned_quantity"])
         self.assertLessEqual(current["quantity"]*(current["entry_fill"]-90),float(p["risk_budget"])+1e-6)
@@ -304,6 +373,10 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertIn(b"Simulated Portfolio",response.body)
         self.assertIn(b"Model rejected",response.body)
+        self.assertIn(b"Controlled Strategy Experiments",response.body)
+        report=json.loads(api.experiment_analytics_payload().body)
+        self.assertEqual(len(report["variants"]),5)
+        self.assertEqual(report["variants"][0]["matched_opportunities"],2)
 
     def test_occupied_top_candidates_do_not_block_lower_eligible_groups(self):
         self.create([setup()])

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from earnings import load_calendar, earnings_snapshot
+from strategies import atr
+
 import json
 import logging
 import time
@@ -292,6 +295,7 @@ def scan_market(
     rule_failures: dict[str, int] = {}
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     regimes = _regime_by_asset_class(enabled_asset_classes)
+    calendar = load_calendar() if "stock" in enabled_asset_classes else {}
     for asset_class, symbols in WATCHLIST.items():
         if asset_class not in enabled_asset_classes:
             continue
@@ -387,6 +391,8 @@ def scan_market(
                     )
                     if not trade:
                         continue
+                    trade.setdefault("components", {}).setdefault("features", {})["atr"] = atr(bars)
+                    trade["components"]["earnings"] = earnings_snapshot(asset, asset_class, datetime.now(timezone.utc), calendar)
                     trade["signal_bar_end"] = bars[-1].get("end_timestamp",bars[-1]["timestamp"])
                     trade["correlation_group"] = get_correlation_group(asset, asset_class)
                     trade["regime"] = regime

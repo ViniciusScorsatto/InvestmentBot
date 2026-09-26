@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import defaultdict
+from market_bars import as_datetime
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from config import (LEARNING_MODEL_BLOCK_MIN_SAMPLE, LEARNING_MODEL_MIN_SAMPLE,
-                    LEARNING_MODEL_MIN_SCORE, STRATEGY_VERSION, SIM_FEE_BPS, SIM_SLIPPAGE_BPS)
+                    LEARNING_MODEL_MIN_SCORE, LEARNING_MODEL_MIN_WEEKS, STRATEGY_VERSION, SIM_FEE_BPS, SIM_SLIPPAGE_BPS)
 from db import fetch_all
 from trade_utils import get_trade_direction
 
@@ -18,9 +21,6 @@ BLOCKING_KEY_TYPES = {
     "setup_slice",
     "strategy_timeframe",
     "asset_class_strategy",
-    "rsi_bucket",
-    "volume_bucket",
-    "ema_gap_bucket",
 }
 
 
@@ -29,6 +29,15 @@ class SliceStats:
     trades: int
     wins: int
     avg_r: float
+    weeks: int = 0
+    lower_r: float | None = None
+    upper_r: float | None = None
+    stable_negative: bool = False
+
+    @property
+    def supported(self) -> bool:
+        return (self.trades >= LEARNING_MODEL_MIN_SAMPLE and self.weeks >= LEARNING_MODEL_MIN_WEEKS
+                and self.lower_r is not None and (self.lower_r > 0 or self.upper_r < 0))
 
     @property
     def win_rate(self) -> float:
@@ -110,8 +119,40 @@ def _closed_trade_rows() -> list[dict[str, Any]]:
     )
 
 
-def _append(stats: dict[tuple[str, ...], list[float]], key: tuple[str, ...], result_r: float) -> None:
-    stats.setdefault(key, []).append(result_r)
+def _append(stats, key, result_r, week):
+    stats.setdefault(key, []).append((result_r, week))
+
+
+def _interval(observations):
+    # Cluster by closing ISO week: concurrent/correlated outcomes do not each count
+    # as independent evidence. Student-t critical values for a two-sided 95% CI.
+    groups = defaultdict(list)
+    for value, week in observations:
+        groups[week].append(value)
+    n, g = len(observations), len(groups)
+    if g < 2:
+        return None, None
+    mean = sum(v for v, _ in observations) / n
+    se = math.sqrt(g / (g - 1) * sum((sum(v) - len(v) * mean) ** 2 for v in groups.values()) / n ** 2)
+    # Include a one-R uncertainty floor; identical small samples aren't certainty.
+    se = max(se, 1 / math.sqrt(n))
+    critical = {1:12.706, 2:4.303, 3:3.182, 4:2.776, 5:2.571, 6:2.447,
+                7:2.365, 8:2.306, 9:2.262, 10:2.228}.get(g - 1, 2.228 if g <= 21 else 2.086)
+    return mean - critical * se, mean + critical * se
+
+
+def _summarize(observations):
+    values = [v for v, _ in observations]
+    weeks = sorted({w for _, w in observations})
+    lower, upper = _interval(observations)
+    half = len(weeks) // 2
+    halves = ([o for o in observations if o[1] in weeks[:half]],
+              [o for o in observations if o[1] in weeks[half:]])
+    stable = all(len(part) >= LEARNING_MODEL_BLOCK_MIN_SAMPLE // 2
+                 and len({w for _, w in part}) >= 2
+                 and (bound := _interval(part)[1]) is not None and bound < 0 for part in halves)
+    return SliceStats(len(values), sum(v > 0 for v in values), sum(values) / len(values),
+                      len(weeks), lower, upper, stable)
 
 
 def _row_value(row: dict[str, Any], *keys: str) -> Any:
@@ -135,7 +176,7 @@ def learned_stats() -> dict[tuple[str, ...], SliceStats]:
 
 
 def build_stats(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], SliceStats]:
-    raw_stats: dict[tuple[str, ...], list[float]] = {}
+    raw_stats: dict[tuple[str, ...], list[tuple[float, tuple[int, int]]]] = {}
     for row in rows:
         if not eligible_history(row):
             continue
@@ -143,6 +184,9 @@ def build_stats(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], SliceStats]
         if result_value is None:
             continue
         result_r = float(result_value)
+        if not math.isfinite(result_r) or not row.get("date_closed"):
+            continue
+        week = as_datetime(row["date_closed"]).date().isocalendar()[:2]
         metadata = _metadata(row)
         features = metadata.get("features") if isinstance(metadata.get("features"), dict) else {}
         strategy = str(_row_value(row, "strategy") or "")
@@ -174,17 +218,9 @@ def build_stats(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], SliceStats]
                 ]
             )
         for key in keys:
-            _append(raw_stats, key, result_r)
+            _append(raw_stats, key, result_r, week)
 
-    return {
-        key: SliceStats(
-            trades=len(results),
-            wins=sum(1 for result in results if result > 0),
-            avg_r=sum(results) / len(results),
-        )
-        for key, results in raw_stats.items()
-        if results
-    }
+    return {key: _summarize(results) for key, results in raw_stats.items() if results}
 
 
 def clear_learning_cache() -> None:
@@ -207,7 +243,7 @@ def _key_label(key: tuple[str, ...]) -> tuple[str, str]:
 def _blocking_slice(key: tuple[str, ...], item: SliceStats) -> dict[str, Any] | None:
     if key[0] not in BLOCKING_KEY_TYPES:
         return None
-    if item.trades < LEARNING_MODEL_BLOCK_MIN_SAMPLE:
+    if item.trades < LEARNING_MODEL_BLOCK_MIN_SAMPLE or not item.supported or not item.stable_negative:
         return None
     model_score = _score_from_slice(item)
     if model_score >= LEARNING_MODEL_MIN_SCORE or item.avg_r >= 0:
@@ -228,11 +264,11 @@ def learning_model_rows() -> list[dict[str, Any]]:
     for key, item in learned_stats().items():
         category, label = _key_label(key)
         model_score = _score_from_slice(item)
-        if item.trades < LEARNING_MODEL_MIN_SAMPLE:
+        if item.trades < LEARNING_MODEL_MIN_SAMPLE or item.weeks < LEARNING_MODEL_MIN_WEEKS:
             stance = "warming_up"
-        elif model_score >= 60 and item.avg_r > 0:
+        elif item.supported and model_score >= 60 and item.avg_r > 0:
             stance = "favored"
-        elif model_score < LEARNING_MODEL_MIN_SCORE:
+        elif item.supported and model_score < LEARNING_MODEL_MIN_SCORE:
             stance = "penalized"
         else:
             stance = "neutral"
@@ -246,7 +282,9 @@ def learning_model_rows() -> list[dict[str, Any]]:
                 "avg_R": item.avg_r,
                 "model_score": model_score,
                 "stance": stance,
-                "active": item.trades >= LEARNING_MODEL_MIN_SAMPLE,
+                "active": item.supported,
+                "weeks": item.weeks, "mean_r_interval": [item.lower_r, item.upper_r],
+                "stable_negative": item.stable_negative,
             }
         )
     return sorted(
@@ -273,16 +311,15 @@ def score_setup(setup: dict[str, Any], stats: dict[tuple[str, ...], SliceStats] 
                 primary_key, primary = key, item
                 break
     sample_size = primary.trades
-    enough_sample = sample_size >= LEARNING_MODEL_MIN_SAMPLE
+    enough_sample = primary.supported
     learned_win_rate = ((PRIOR_TRADES * PRIOR_WIN_RATE + primary.wins)
                         / (PRIOR_TRADES + sample_size))
     learned_avg_r = primary.avg_r * sample_size / (PRIOR_TRADES + sample_size)
     model_score = _score_from_slice(primary) if enough_sample else 50
-    blocking_slices = [
-        blocking_slice
-        for key, item in matched_slices
-        if (blocking_slice := _blocking_slice(key, item)) is not None
-    ]
+    # Only the predeclared scoring cohort may veto; descriptive feature buckets
+    # never independently veto a candidate (avoids a multiple-comparisons trap).
+    blocking = _blocking_slice(primary_key, primary) if primary_key else None
+    blocking_slices = [blocking] if blocking else []
     approved = not blocking_slices
 
     return {
@@ -292,7 +329,9 @@ def score_setup(setup: dict[str, Any], stats: dict[tuple[str, ...], SliceStats] 
         "learned_win_rate": round(learned_win_rate * 100, 1),
         "learned_avg_R": round(learned_avg_r, 2),
         "sample_size": sample_size,
-        "confidence": "active" if enough_sample else "warming_up",
+        "confidence": "active" if enough_sample else ("uncertain" if sample_size >= LEARNING_MODEL_MIN_SAMPLE else "warming_up"),
+        "weeks": primary.weeks, "mean_r_interval": [primary.lower_r, primary.upper_r],
+        "stable_negative": primary.stable_negative,
         "approved": approved,
         "min_score": LEARNING_MODEL_MIN_SCORE if sample_size >= LEARNING_MODEL_BLOCK_MIN_SAMPLE else None,
         "block_min_sample": LEARNING_MODEL_BLOCK_MIN_SAMPLE,

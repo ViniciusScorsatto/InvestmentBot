@@ -109,12 +109,15 @@ def analytics_page(
         learning_rows = []
     from portfolio import portfolio_payload
     from signals import shadow_report
+    from experiments import experiment_report
     try:
         portfolio_data, shadow_data = portfolio_payload(), shadow_report()
+        experiments_data = experiment_report()
         research_error = None
     except Exception:
         LOGGER.exception("Portfolio/shadow analytics unavailable")
         portfolio_data, shadow_data = None, None
+        experiments_data = None
         research_error = "Portfolio and shadow results are temporarily unavailable."
     return templates.TemplateResponse(
         request,
@@ -130,6 +133,7 @@ def analytics_page(
             "analytics_summary": filtered["summary"],
             "portfolio": portfolio_data,
             "shadow": shadow_data,
+            "experiments": experiments_data,
             "research_error": research_error,
             "since_change": since_change,
             "learning_model_rows": learning_rows,
@@ -172,3 +176,9 @@ def portfolio_analytics_payload() -> JSONResponse:
 def shadow_analytics_payload() -> JSONResponse:
     from signals import shadow_report
     return JSONResponse(shadow_report())
+
+
+@router.get("/analytics/experiments")
+def experiment_analytics_payload() -> JSONResponse:
+    from experiments import experiment_report
+    return JSONResponse(experiment_report())

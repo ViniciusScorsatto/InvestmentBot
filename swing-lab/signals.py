@@ -44,6 +44,8 @@ def record_signals(connection, candidates, observed_at):
         """, (state["signal_id"],STRATEGY_VERSION,setup["asset"],setup["asset_class"],setup["strategy"],setup["timeframe"],
                 setup["signal_bar_end"],observed_at,approved,json.dumps(setup),json.dumps(state))).fetchone()
         if row:
+            from experiments import record_experiments
+            record_experiments(connection, state)
             fresh.append(setup)
     return fresh
 
@@ -68,6 +70,8 @@ def update_shadow_trades(now=None):
                 WHERE signal_id=%s AND shadow_state=%s::jsonb RETURNING signal_id
             """, (json.dumps(state),state["status"],row["signal_id"],json.dumps(old))).fetchone()
         count += bool(result)
+    from experiments import update_experiments
+    update_experiments(now, datasets)
     return count
 
 

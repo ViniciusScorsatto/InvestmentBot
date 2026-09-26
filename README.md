@@ -98,8 +98,17 @@ research simulation, not an order-execution service.
 The learning rank is based on shrinkage-adjusted average **net R**, with win rate
 reported descriptively. It uses one cohort for ranking instead of treating
 multiple overlapping slices as independent observations. Warm-up/unavailable
-feedback has zero ranking weight. Specific negative-expectancy slices can still
-veto candidates after the configured minimum sample.
+or statistically uncertain feedback has zero ranking weight. Ranking requires at
+least 30 closed outcomes across four ISO closing weeks and an approximate 95%
+mean-R interval excluding zero. Intervals cluster outcomes by closing week, use
+conservative Student-t critical values and a one-R standard-error floor; they
+are an uncertainty safeguard, not a guarantee about independent observations.
+Only the predeclared scoring cohort can veto: at least 60 observations, at least
+30 in each chronological half, at least two weeks per half, and a negative upper
+interval bound in both halves. Feature buckets remain descriptive, eliminating
+independent vetoes from many overlapping buckets. The thresholds can be raised
+with `SWING_LAB_LEARNING_MODEL_MIN_SAMPLE` and
+`SWING_LAB_LEARNING_MODEL_BLOCK_MIN_SAMPLE`; values below 30/60 are rejected.
 
 Training is restricted to the current strategy version and matching cost settings.
 The default analytics view also isolates the current version; an explicit date
@@ -199,10 +208,100 @@ sample sizes must not be interpreted as portfolio return uplift. Historical reje
 signals cannot be reconstructed. The older walk-forward endpoint remains available
 for retrospective checks on recorded executed trades.
 
+## Entry quality and controlled experiments
+
+Version `quality-v2-experiments-v1` applies these changes prospectively. Existing
+positions retain their frozen execution contracts; no historical outcome is
+rewritten and older signals are not retroactively assigned experiments.
+
+- **Entry payoff check:** at the next eligible hourly open, include entry slippage,
+  both fees and estimated stop slippage in the reward/risk ratio. Cancel unfilled
+  entries below `SWING_LAB_MIN_ENTRY_NET_R` (default **1.8**) and release reservations
+  atomically. This is deliberately below the 2R gross setup threshold to leave room
+  for costs on nominal 2R pullbacks. Record the computed ratio and cancellation
+  reason. The check estimates full-target payoff; it is not a win-probability or
+  expectancy estimate and does not promise stop execution at the estimated price.
+- **Comparable volume:** exclude the signal candle from the average. Stocks/ETFs
+  compare only bars with the same offset from the exchange open and the same
+  duration, including daily bars. Use up to 20 prior matching observations and
+  require at least 10; missing timestamps/history, zero baselines and invalid
+  volumes reject a setup. Early-close segments without comparable history are
+  deliberately skipped. Crypto uses the preceding 20 bars.
+- **Learning safeguards:** the larger, time-diversified evidence requirements above
+  replace the previous 8/16-trade thresholds. Learning uses funded trades only.
+
+The analytics page and `GET /analytics/experiments` compare five frozen variants
+on every newly recorded qualifying signal, including model-rejected signals:
+
+| Variant | Single change from baseline |
+| --- | --- |
+| Baseline | Current funded strategy rules |
+| ATR stop | Widen the structural stop by 0.5 signal-timeframe Wilder ATR(14); preserve target and recheck entry payoff |
+| Delayed breakeven | Raise stop to entry at +1.5R; preserve any half exit at +1R |
+| ATR trailing | After +1R, trail by one frozen signal-timeframe ATR from each completed hourly close; apply only to the next bar and never loosen |
+| Earnings blackout | Skip individual-stock entries on a report date or the two preceding calendar days |
+
+ATR is measured using completed bars available at signal time, including price
+gaps, and remains frozen. Invalid/missing ATR is unavailable, not a fabricated
+zero. These variants never reserve cash, send trade notifications, train the
+model or change funded strategy rules. Definitions and states are stored
+transactionally with the signal, with unique `(signal_id, variant)` keys and
+compare-and-swap replay. A new definition requires a new version.
+
+Comparisons include only pairs where both baseline and variant have resolved.
+Skipped/cancelled opportunities contribute zero to mean delta R; unavailable
+observations are excluded. Win rate, average R and closed-R drawdown apply to
+filled trades in those matched pairs. Open, unavailable, skipped and cancelled
+counts are exposed separately in JSON. R assumes the same initial risk budget
+per filled variant, so wider stops imply fewer units. This is not a simulation of
+separately funded portfolios, and closed-R drawdown is not concurrent equity
+drawdown. Compare the baseline subset shown for each variant, not unmatched totals.
+
+Stopped trades continue observing subsequent complete bars until their original
+expiry, counting later touches of the original target. The stopping bar is
+excluded because intrabar ordering is ambiguous. Missing bars keep followups
+unresolved; wall-clock expiry never fabricates a negative observation. Reports
+show resolved and pending followups separately.
+
+Do not promote a variant based on one favorable average. Keep definitions frozen,
+collect outcomes across separate market periods, compare net R, drawdown, win
+rate and opportunity count, and confirm any proposed change in a later untouched
+period. No variant is promoted automatically.
+
+### Earnings calendar setup
+
+The earnings test is **shadow-only**. Supply either:
+
+- `SWING_LAB_EARNINGS_API_KEY`: an Alpha Vantage key. The app requests the documented
+  [EARNINGS_CALENDAR](https://www.alphavantage.co/documentation/#earnings-calendar)
+  CSV endpoint with a three-month horizon, caches successful responses for six
+  hours, backs off 15 minutes after failures, and never logs the key or response.
+- `SWING_LAB_EARNINGS_CALENDAR_PATH`: a local JSON snapshot from a trusted calendar
+  (takes precedence over the API). Format:
+
+```json
+{
+  "source": "Your calendar provider",
+  "fetched_at": "2026-09-27T00:00:00+00:00",
+  "events": {"AAPL": ["2026-10-29"], "MSFT": ["2026-10-28"]}
+}
+```
+
+The dates above illustrate the format; they are not verified earnings dates.
+Freshness must be within 24 hours, and never in the future. Each candidate freezes
+its source, fetch time and next report date. The actual next-open date is checked
+again using only that frozen calendar; a now-stale snapshot is unavailable.
+Dates use New York calendar days; without a reliable release time the whole
+report date is blocked. A missing symbol, old date, bad response or unconfigured
+provider is **unknown**, never “no earnings.” ETFs and crypto are not applicable.
+Unknown observations are excluded from the earnings comparison and visibly counted
+as unavailable; the funded portfolio remains on baseline rules. Calendar revisions
+cannot rewrite already-recorded decisions.
+
 ## Database and notification safeguards
 
 Startup runs an additive migration under a PostgreSQL advisory lock. It creates
-signal/progress, portfolio/ledger/snapshot and notification-outbox tables, adds
+signal/progress/experiment, portfolio/ledger/snapshot and notification-outbox tables, adds
 `trades.signal_id`, and creates active-position/signal uniqueness indexes. It is
 idempotent and preserves historical closed results. Existing duplicate open
 asset/timeframe positions cause an explicit migration failure listing their IDs;
