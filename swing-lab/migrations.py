@@ -89,3 +89,27 @@ def upgrade(connection):
         )
     """)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_experiments_active ON signal_experiments(signal_id) WHERE status IN ('open','monitoring')")
+
+    connection.execute("ALTER TABLE signals ADD COLUMN IF NOT EXISTS label_available_at TIMESTAMPTZ")
+    # Old outcomes become usable now, never at an invented historical arrival time.
+    connection.execute("""UPDATE signals SET label_available_at=clock_timestamp()
+                          WHERE label_available_at IS NULL AND shadow_status <> 'open'""")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_signal_label_available ON signals(strategy_version,label_available_at) WHERE label_available_at IS NOT NULL")
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS model_snapshots (
+            snapshot_id TEXT PRIMARY KEY, model_version TEXT NOT NULL,
+            strategy_version TEXT NOT NULL, training_cutoff TIMESTAMPTZ NOT NULL,
+            artifact JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS model_predictions (
+            signal_id TEXT NOT NULL REFERENCES signals(signal_id), model_version TEXT NOT NULL,
+            snapshot_id TEXT REFERENCES model_snapshots(snapshot_id), batch_id TEXT NOT NULL,
+            predicted_at TIMESTAMPTZ NOT NULL, prediction JSONB NOT NULL,
+            champion_rank INTEGER, challenger_rank INTEGER,
+            champion_selected BOOLEAN NOT NULL, challenger_selected BOOLEAN NOT NULL,
+            PRIMARY KEY(signal_id,model_version)
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_model_predictions_version_batch ON model_predictions(model_version,batch_id)")

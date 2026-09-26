@@ -54,6 +54,160 @@ class DatabaseTests(unittest.TestCase):
         with patch.object(trades,"_now_utc",return_value=now or T0+timedelta(hours=2)),patch.object(trades,"fetch_asset_data",return_value={"execution":bars}):
             return trades.update_open_trades()
 
+    def test_feature_challenger_fits_persisted_history_and_records_real_prediction(self):
+        # Synthetic relationship exercises the whole DB -> fit -> frozen prediction path.
+        # It is not a market-performance test.
+        values=[]
+        for day in range(120):
+            observed=T0-timedelta(days=120-day)
+            for j,rsi in enumerate((35,45,55,65)):
+                candidate=setup(asset=f"TEST{j}",approved=False,end=observed)
+                candidate["components"]={"features":{"rsi":rsi,"volume_ratio":1.3,"distance_ema20_pct":.01,"ema_gap_pct":.02,"atr":4}}
+                state=signals.initial_state(candidate,observed)
+                state.update(status="closed",result_R=(rsi-50)/10,date_closed=(observed+timedelta(hours=6)).isoformat())
+                state["metadata"]["execution"]["pending_entry"]=False
+                values.append((f"history-{day}-{j}",config.STRATEGY_VERSION,candidate["asset"],"crypto","Breakout","4h",
+                               observed,observed,False,json.dumps(candidate),json.dumps(state),"closed",observed+timedelta(hours=7)))
+        with db.get_db() as connection:
+            with connection.cursor() as cursor:
+                cursor.executemany("""INSERT INTO signals(signal_id,strategy_version,asset,asset_class,strategy,timeframe,
+                    bar_end,observed_at,model_approved,setup_json,shadow_state,shadow_status,label_available_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s)""",values)
+        candidate=setup();candidate["components"]={"features":{"rsi":65,"volume_ratio":1.3,"distance_ema20_pct":.01,"ema_gap_pct":.02,"atr":4}}
+        self.assertEqual(len(self.create([candidate])),1)
+        row=db.fetch_one("SELECT * FROM model_predictions")
+        artifact=db.fetch_one("SELECT artifact FROM model_snapshots")["artifact"]
+        self.assertEqual(artifact["raw"]["training_rows"],480)
+        self.assertEqual(artifact["contract"]["strategy_version"],config.STRATEGY_VERSION)
+        self.assertTrue(row["prediction"]["ranking_ready"])
+        self.assertGreater(row["prediction"]["feature_weight"],0)
+        self.assertEqual(row["prediction"]["feature_status"],"validated")
+        self.assertEqual(row["prediction"]["snapshot_id"],artifact["snapshot_id"])
+        self.assertEqual(row["prediction"]["prediction_basis"],"per_signal_opportunity")
+
+    def test_entry_challenger_persists_frozen_opportunity_predictions(self):
+        values = []
+        for day in range(140):
+            observed = T0-timedelta(days=142-day)
+            for j, rsi in enumerate((35,40,45,50,55,60,65,70)):
+                candidate = setup(asset=f"ENTRY{j}", approved=False, end=observed)
+                candidate["components"] = {"features": {"rsi": rsi, "volume_ratio": 1.3,
+                    "distance_ema20_pct": .01, "ema_gap_pct": .02, "atr": 4}}
+                state = signals.initial_state(candidate, observed)
+                state.update(status="cancelled" if rsi<55 else "closed", result_R=None if rsi<55 else 1.,
+                             date_closed=(observed+timedelta(hours=6)).isoformat())
+                values.append((f"entry-{day}-{j}", config.STRATEGY_VERSION, candidate["asset"], "crypto", "Breakout", "4h",
+                               observed, observed, False, json.dumps(candidate), json.dumps(state), state["status"],
+                               observed+timedelta(hours=7)))
+        with db.get_db() as connection:
+            with connection.cursor() as cursor:
+                cursor.executemany("""INSERT INTO signals(signal_id,strategy_version,asset,asset_class,strategy,timeframe,
+                    bar_end,observed_at,model_approved,setup_json,shadow_state,shadow_status,label_available_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s)""", values)
+        candidate = setup()
+        candidate["components"] = {"features": {"rsi": 70, "volume_ratio": 1.3,
+            "distance_ema20_pct": .01, "ema_gap_pct": .02, "atr": 4}}
+        self.assertEqual(len(self.create([candidate])), 1)
+        row = db.fetch_one("SELECT * FROM model_predictions")
+        artifact = db.fetch_one("SELECT artifact FROM model_snapshots")["artifact"]
+        self.assertEqual(artifact["entry"]["training_rows"], 1120)
+        self.assertEqual(artifact["raw"]["training_rows"], 560)
+        self.assertTrue(artifact["validation"]["entry"]["validated"])
+        prediction = row["prediction"]
+        self.assertEqual(prediction["entry_status"], "validated")
+        self.assertEqual(prediction["prediction_basis"], "per_signal_opportunity")
+        self.assertAlmostEqual(prediction["expected_net_R"], prediction["entry_probability"]*prediction["conditional_net_R"])
+        self.create([candidate])
+        self.assertEqual(row, db.fetch_one("SELECT * FROM model_predictions"))
+
+    def test_model_prediction_snapshot_is_atomic_and_rescans_preserve_it(self):
+        self.create([setup(),setup("ETH",approved=False)])
+        rows=db.fetch_all("SELECT * FROM model_predictions ORDER BY signal_id")
+        self.assertEqual(len(rows),2)
+        self.assertEqual(len({r["snapshot_id"] for r in rows}),1)
+        self.assertTrue(all(not r["prediction"]["ranking_ready"] for r in rows))
+        self.assertTrue(all(r["champion_selected"]==r["challenger_selected"] for r in rows))
+        self.create([setup(),setup("ETH",approved=True)])
+        db.initialize_db()
+        self.assertEqual(rows,db.fetch_all("SELECT * FROM model_predictions ORDER BY signal_id"))
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM model_snapshots")["n"],1)
+
+    def test_model_write_failure_rolls_back_signal_and_portfolio(self):
+        import model_research
+        with patch.object(model_research,"record_batch",side_effect=RuntimeError("write failure")):
+            with self.assertRaises(RuntimeError):self.create([setup()])
+        for table in ("signals","trades","model_predictions","model_snapshots","signal_experiments"):
+            self.assertEqual(db.fetch_one(f"SELECT count(*) AS n FROM {table}")["n"],0)
+        self.assertEqual(float(db.fetch_one("SELECT reserved_cash FROM portfolio_accounts")["reserved_cash"]),0)
+
+    def test_model_failure_keeps_funded_approval_and_persists_unavailability(self):
+        import model_research
+        with patch.object(model_research,"read_signal_rows",side_effect=RuntimeError("read failed")):
+            ids=self.create([setup(),setup("ETH",approved=False)])
+        self.assertEqual(len(ids),1)
+        rows=db.fetch_all("SELECT * FROM model_predictions")
+        self.assertEqual(len(rows),2)
+        self.assertTrue(all(r["snapshot_id"] is None and r["prediction"]["feature_status"]=="unavailable" for r in rows))
+        self.assertTrue(all(r["champion_selected"]==r["challenger_selected"] for r in rows))
+
+    def test_database_arrival_timestamp_is_not_backdated_to_bar_close(self):
+        self.create([setup()])
+        before=datetime.now(timezone.utc)
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(low=80)]}):
+            signals.update_shadow_trades(T0+timedelta(hours=2))
+        row=db.fetch_one("SELECT * FROM signals")
+        self.assertGreaterEqual(row["label_available_at"],before)
+        original=row["label_available_at"]
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(low=80)]}):
+            signals.update_shadow_trades()
+        db.initialize_db()
+        self.assertEqual(db.fetch_one("SELECT label_available_at FROM signals")["label_available_at"],original)
+
+    def test_migration_backfills_old_availability_at_upgrade_only(self):
+        self.create([setup()])
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(low=80)]}):signals.update_shadow_trades(T0+timedelta(hours=2))
+        db.execute("UPDATE signals SET label_available_at=NULL")
+        before=datetime.now(timezone.utc)
+        db.initialize_db()
+        row=db.fetch_one("SELECT * FROM signals")
+        self.assertGreaterEqual(row["label_available_at"],before)
+        self.assertEqual(row["shadow_state"]["status"],"stopped")
+
+    def test_challenger_trains_all_baseline_labels_not_experiment_duplicates(self):
+        import model_dataset,model_research
+        self.create([setup(),setup("ETH",approved=False),setup("SOL")])
+        with patch.object(scanner,"fetch_asset_data",return_value={"execution":[bar(low=80)]}):signals.update_shadow_trades(T0+timedelta(hours=2))
+        now=datetime.now(timezone.utc)+timedelta(seconds=1)
+        rows=model_dataset.read_signal_rows()
+        observations,coverage=model_dataset.dataset(rows,now)
+        self.assertEqual(len(model_dataset.training_rows(observations,now)),3)
+        self.assertEqual(coverage["model_rejected"],1)
+        self.assertEqual(coverage["unselected"],2)
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM signal_experiments")["n"],15)
+        candidate=setup("XRP",end=now)
+        prepared=model_research.prepare_batch([candidate],now)
+        self.assertEqual(prepared["artifact"]["raw"]["training_rows"],3)
+        self.assertEqual(len(prepared["artifact"]["training_ids"]),3)
+
+    def test_concurrent_model_predictions_are_unique(self):
+        with patch.object(trades,"_now_utc",return_value=T0):
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                list(pool.map(lambda _:trades.create_trades_from_candidates([setup()]),range(3)))
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM model_predictions")["n"],1)
+        self.assertEqual(db.fetch_one("SELECT count(*) AS n FROM model_snapshots")["n"],1)
+
+    def test_model_endpoints_render_frozen_and_chronological_evidence(self):
+        import api
+        self.create([setup(),setup("ETH",approved=False)])
+        payload=json.loads(api.model_research_payload().body)
+        self.assertEqual(payload["mode"],"shadow_only")
+        self.assertEqual(payload["comparison"]["recorded_batches"],1)
+        self.assertEqual(payload["comparison"]["pending_batches"],1)
+        self.assertEqual(len(payload["recent_predictions"]),2)
+        retrospective=json.loads(api.model_chronological_payload().body)
+        self.assertEqual(retrospective["mode"],"retrospective_research")
+        self.assertEqual(retrospective["comparison"]["matched_batches"],0)
+
     def test_quality_gap_cancel_and_shadow_match_release_all_cash(self):
         self.create([setup()])
         bars=[bar(op=120,high=125,low=119)]

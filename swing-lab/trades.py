@@ -117,11 +117,14 @@ def create_trades_from_candidates(candidates: list[dict[str, Any]], limit: int |
                                   completed_windows: list[dict[str, Any]] | None = None) -> list[int]:
     now = _now_utc()
     created = []
+    from model_research import prepare_batch, record_batch
+    research = prepare_batch(candidates, now)
     with get_db() as connection:
         # One account row serializes eligibility, reservations, and the daily limit.
         portfolio.lock_account(connection)
         portfolio.adopt_legacy_positions(connection)
         fresh = record_signals(connection,candidates,now)
+        record_batch(connection, research, fresh)
         fresh.sort(key=lambda t:(t.get("combined_score",t["score"]),t["score"],t["R_multiple"]),reverse=True)
         cap = min(PREFERRED_TOP_SETUPS, limit if limit is not None else PREFERRED_TOP_SETUPS)
         for setup in fresh:

@@ -66,9 +66,10 @@ def update_shadow_trades(now=None):
             continue
         with get_db() as connection:
             result = connection.execute("""
-                UPDATE signals SET shadow_state=%s::jsonb,shadow_status=%s
+                UPDATE signals SET shadow_state=%s::jsonb,shadow_status=%s,
+                    label_available_at=CASE WHEN %s <> 'open' THEN COALESCE(label_available_at,clock_timestamp()) ELSE label_available_at END
                 WHERE signal_id=%s AND shadow_state=%s::jsonb RETURNING signal_id
-            """, (json.dumps(state),state["status"],row["signal_id"],json.dumps(old))).fetchone()
+            """, (json.dumps(state),state["status"],state["status"],row["signal_id"],json.dumps(old))).fetchone()
         count += bool(result)
     from experiments import update_experiments
     update_experiments(now, datasets)

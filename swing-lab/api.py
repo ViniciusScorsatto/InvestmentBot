@@ -119,6 +119,13 @@ def analytics_page(
         portfolio_data, shadow_data = None, None
         experiments_data = None
         research_error = "Portfolio and shadow results are temporarily unavailable."
+    from model_research import prospective_report
+    try:
+        model_data = prospective_report()
+        model_error = None
+    except Exception:
+        LOGGER.exception("Model research analytics unavailable")
+        model_data, model_error = None, "Model comparison is temporarily unavailable."
     return templates.TemplateResponse(
         request,
         "analytics.html",
@@ -134,6 +141,8 @@ def analytics_page(
             "portfolio": portfolio_data,
             "shadow": shadow_data,
             "experiments": experiments_data,
+            "model_research": model_data,
+            "model_error": model_error,
             "research_error": research_error,
             "since_change": since_change,
             "learning_model_rows": learning_rows,
@@ -182,3 +191,15 @@ def shadow_analytics_payload() -> JSONResponse:
 def experiment_analytics_payload() -> JSONResponse:
     from experiments import experiment_report
     return JSONResponse(experiment_report())
+
+
+@router.get("/analytics/model")
+def model_research_payload() -> JSONResponse:
+    from model_research import prospective_report
+    return JSONResponse(prospective_report())
+
+
+@router.get("/analytics/model/evaluation")
+def model_chronological_payload() -> JSONResponse:
+    from model_research import chronological_evaluation
+    return JSONResponse(chronological_evaluation())

@@ -298,10 +298,133 @@ Unknown observations are excluded from the earnings comparison and visibly count
 as unavailable; the funded portfolio remains on baseline rules. Calendar revisions
 cannot rewrite already-recorded decisions.
 
+## Model challenger (shadow only)
+
+`ridge-entry-v2` adds model research without changing funded trade selection,
+strategy rules, stops, fees, or the existing learning model. It has a separate
+model version so this addition does not discard compatible strategy history.
+There is no automatic promotion switch.
+
+### Training data and time boundaries
+
+The challenger uses one row per qualifying **baseline signal**, including model
+rejections and signals omitted by portfolio limits. It never duplicates a selected
+signal by adding its funded trade, and never trains on experimental stop/exit
+variants. Training requires matching strategy version, execution version, fees,
+slippage, minimum entry payoff, breakeven rule and maximum duration. It uses
+completed filled-trade net R; cancelled entries are zero-return opportunities in
+comparisons and negative labels for the entry model, not return-regression targets. Missing features retain the outcome for the
+hierarchy but exclude it from the feature fit.
+
+`signals.label_available_at` records when a terminal baseline outcome is first
+persisted, rather than assuming the closing candle was immediately available.
+Features come from the original immutable signal setup, including its original
+entry and stop, never later fills or exit information. Each fit requires both
+observation and label availability **strictly before** its cutoff. Unresolved,
+nonfinite or incompatible labels are excluded. Existing terminal signals without
+availability timestamps become available at migration time and are never backdated.
+
+### What the challenger estimates
+
+A ridge regressor predicts a correction to a hierarchically pooled net-R estimate.
+The fixed features are RSI, log(1 + relative volume), distance from EMA20 as a price
+fraction, EMA20–EMA50 gap as a price fraction, ATR/price and initial stop distance/ATR.
+Two fixed nonlinear terms add RSI curvature `((RSI - 50) / 50)^2` and
+EMA gap × log(1 + relative volume).
+A weighted mean and scale are fitted only on training features; standardized inputs
+are clipped at ±5 for numerical stability. The L2 penalty is fixed at 10, rather
+than searched across test results. NumPy provides the linear algebra.
+
+The hierarchy is global → strategy → strategy/asset-class →
+strategy/asset-class/timeframe. Each level blends its observations with its parent's
+estimate using a fixed 20-unit prior strength, smoothly borrowing evidence for
+small/unseen groups. This is empirical pooling, not an exact Bayesian posterior.
+To limit repeated correlated evidence, each correlation group contributes a total
+training weight of at most one per UTC decision date. A fixed 90-day half-life
+then reduces weight with age, measured from observation to the fit cutoff. This
+applies to pooling, feature fitting and entry fitting; validation outcomes receive
+cluster weights without age decay. No half-life search is performed. Feature-fit residuals use a hierarchy
+that excludes the observation's entire correlated date/group cluster.
+
+Feature fitting needs at least 30 complete feature rows across four observation
+weeks and ten age-weighted evidence units. Feature influence is scaled by effective
+training weight and candidate extrapolation/leverage. It is zero unless earlier
+validation shows both lower mean absolute error and better top-three selections.
+Validation tests the same confidence-weighted correction used for predictions.
+
+A separate L2-regularized logistic model estimates entry probability from the same
+signal-time features. It trains on resolved fills and cancellations, respecting the
+same arrival cutoffs. It requires four weeks, 30 feature rows, ten evidence units,
+and five weighted units of each class. Sparse, missing-feature or unproven cases
+use a pooled fill probability with a fixed Beta(10, 10) prior. Feature-based entry
+probabilities require lower held-out Brier loss and improved selection outcomes.
+Reliability bins report predicted versus observed fill frequencies; passing the
+gates does not establish perfect calibration.
+
+The ranking quantity is **estimated net R per signal opportunity**:
+`entry_probability × conditional_net_R`. Predictions retain both components for
+audit. Cancelled entries have zero opportunity return. The conditional estimate is
+the pooled return plus its validated feature correction. All four changes remain
+in the shadow challenger; they do not alter funded selections.
+
+For initial safety, challenger rankings fall back to the current model until
+there are at least 30 outcomes across four weeks and ten effective evidence units.
+After that, the hierarchy can rank while the feature correction remains unproven.
+Missing features use the hierarchy alone. Read/fit failures are recorded as
+unavailable and fall back to current-model ranks without changing funded decisions.
+
+### Validation and comparisons
+
+Every new qualifying scan records an immutable model snapshot and per-signal
+predictions alongside both models' ranks and top-three choices. Snapshots include
+the training cutoff, training IDs and hash, model definition, execution contract, fitted hierarchy,
+scalers, return coefficients, entry classifier, recency settings and validation diagnostics. Signal, experiment, model and
+portfolio writes remain transactional. Repeated scans cannot replace predictions.
+
+The inner validation uses four fixed calendar weeks ending at least 17 days before
+the fit cutoff. Each week refits from labels available strictly before that week,
+and a week with any unresolved signal supplies no evidence. Feature influence
+requires at least two completed validation weeks and 20 effective validation units,
+as well as a lower weighted MAE. On the same complete scan batches, the fixed
+positive-return top-three policy must also improve mean net R per batch without
+worsening the worst weekly total. The return correction is checked against pooling;
+the entry classifier is checked against pooled entry probability using the validated
+return policy. Ties use the same score and signal-ID ordering as prospective ranks.
+These are nested development gates; outer evaluation and future frozen predictions
+remain separate. They are not significance tests, and four weeks can be noisy.
+These conservative checks are evidence controls,
+not statistical guarantees of future profitability.
+
+The model panel in Analytics links to:
+
+- `GET /analytics/model`: frozen **prospective** predictions, training coverage,
+  latest snapshot diagnostics and matched ranking outcomes.
+- `GET /analytics/model/evaluation`: **retrospective** weekly expanding-window
+  evaluation. Every weekly fit recomputes preprocessing, pooling, ridge and inner
+  validation using earlier data only. Incomplete weeks are listed but excluded
+  from aggregate results. The existing `/analytics/learning/evaluation` remains
+  the older funded-trade-only evaluation of the current model.
+
+Both models see the same candidate batches. The current model uses frozen approval
+and combined score; the challenger ranks positive estimated net R. Ties resolve
+by score and signal identity. Cold/unavailable batches explicitly fall back to the
+current model and are not described as active challenger decisions. The comparison
+selects up to three signals per model, without portfolio funding, exposure or
+correlation limits; it is not a funded portfolio backtest. Entire unresolved
+batches are excluded so early-closing winners cannot make a comparison look better.
+Reports include opportunities, filled sample size, cancellations, net R, win rate,
+closed-trade R drawdown, mean delta per matched batch and opportunity prediction MAE (including cancellations).
+
+No unseen historical signals are reconstructed. Calendar-week validation observes
+temporal ordering but cannot make correlated markets independent. Review several
+later completed periods and prospective results before promoting a model. A
+synthetic regression test demonstrates recovery of a known feature/return
+relationship; it does not measure investment performance.
+
 ## Database and notification safeguards
 
 Startup runs an additive migration under a PostgreSQL advisory lock. It creates
-signal/progress/experiment, portfolio/ledger/snapshot and notification-outbox tables, adds
+signal/progress/experiment/model, portfolio/ledger/snapshot and notification-outbox tables, adds
 `trades.signal_id`, and creates active-position/signal uniqueness indexes. It is
 idempotent and preserves historical closed results. Existing duplicate open
 asset/timeframe positions cause an explicit migration failure listing their IDs;

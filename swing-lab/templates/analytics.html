@@ -162,6 +162,31 @@
         </div>
       </div>
 
+      <section class="panel" aria-label="Model challenger comparison">
+        <h2>Model Challenger · Shadow Only</h2>
+        <p class="muted">The challenger learns from qualifying baseline signals, including rejected and unselected setups. The current model continues to control portfolio selections.</p>
+        {% if model_research %}
+        {% set comparison = model_research.comparison %}
+        <p>{{ comparison.recorded_batches }} recorded batches · {{ comparison.matched_batches }} fully resolved · {{ comparison.pending_batches }} pending · {{ comparison.ready_batches }} with enough history to rank.</p>
+        {% if model_research.latest_model %}
+        <p class="muted">Latest training: {{ model_research.latest_model.training_rows }} outcomes, {{ "%.1f"|format(model_research.latest_model.effective_units) }} weighted evidence units. Ranks include entry probability. Feature influence requires better forecasts and selections in earlier held-out weeks; warm-up falls back to the current model.</p>
+        {% else %}<p class="muted">Waiting for the next qualifying scan to record the first model snapshot.</p>{% endif %}
+        <div class="table-wrap"><table class="compact-table">
+          <thead><tr><th>Model</th><th>Selected Opportunities</th><th>Filled / Closed</th><th>Average Net R</th><th>Total Net R</th><th>Win Rate</th><th>Closed R Drawdown</th></tr></thead>
+          <tbody>{% for label, row in [("Current model",comparison.champion),("Challenger",comparison.challenger)] %}
+            <tr><td>{{ label }}</td><td>{{ row.selected_opportunities }}</td><td>{{ row.closed_trades }}</td>
+            <td>{{ "%.3f"|format(row.avg_R) if row.avg_R is not none else "—" }}</td><td>{{ "%.3f"|format(row.total_R) }}</td>
+            <td>{{ "%.1f%%"|format(row.win_rate) if row.win_rate is not none else "—" }}</td><td>{{ "%.2f"|format(row.max_closed_drawdown_R) }}</td></tr>
+          {% endfor %}</tbody>
+        </table></div>
+        <p>Matched change per batch: {{ "%+.3f R"|format(comparison.mean_delta_R_per_batch) if comparison.mean_delta_R_per_batch is not none else "Awaiting resolved batches" }}.</p>
+        <p class="muted">This compares top-ranked signals on the same batches, without portfolio funding limits. Cancelled entries contribute zero. Pending batches are excluded. Positive results do not establish reliable improvement, and no model is promoted automatically.</p>
+        {% if model_research.unavailable_predictions %}<p role="status">{{ model_research.unavailable_predictions }} predictions were unavailable and fell back to the current model.</p>{% endif %}
+        <p><a href="/analytics/model">View frozen predictions and training evidence</a></p>
+        <p><a href="/analytics/model/evaluation">Evaluate earlier data against later weekly periods</a></p>
+        {% else %}<p role="status">{{ model_error }}</p>{% endif %}
+      </section>
+
       <div class="panel">
         <h2>Learning Model</h2>
         <p class="muted">Ranking needs at least 30 outcomes across four closing weeks and a mean-R uncertainty interval that excludes zero. Blocking needs at least 60 outcomes and negative evidence in both chronological halves. Feature buckets are descriptive; only the scoring cohort can block.</p>
