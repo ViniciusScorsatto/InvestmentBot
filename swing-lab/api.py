@@ -107,6 +107,15 @@ def analytics_page(
     except Exception as exc:
         LOGGER.exception("Failed to build learning model analytics")
         learning_rows = []
+    from portfolio import portfolio_payload
+    from signals import shadow_report
+    try:
+        portfolio_data, shadow_data = portfolio_payload(), shadow_report()
+        research_error = None
+    except Exception:
+        LOGGER.exception("Portfolio/shadow analytics unavailable")
+        portfolio_data, shadow_data = None, None
+        research_error = "Portfolio and shadow results are temporarily unavailable."
     return templates.TemplateResponse(
         request,
         "analytics.html",
@@ -119,6 +128,9 @@ def analytics_page(
             "direction_stats": filtered["direction_stats"],
             "setup_slice_stats": filtered["setup_slice_stats"],
             "analytics_summary": filtered["summary"],
+            "portfolio": portfolio_data,
+            "shadow": shadow_data,
+            "research_error": research_error,
             "since_change": since_change,
             "learning_model_rows": learning_rows,
             "learning_model_favored": [row for row in learning_rows if row["stance"] == "favored"][:8],
@@ -148,3 +160,15 @@ def learning_model_payload() -> JSONResponse:
 def learning_evaluation_payload() -> JSONResponse:
     from evaluation import walk_forward_evaluation
     return JSONResponse(walk_forward_evaluation())
+
+
+@router.get("/analytics/portfolio")
+def portfolio_analytics_payload() -> JSONResponse:
+    from portfolio import portfolio_payload
+    return JSONResponse(portfolio_payload())
+
+
+@router.get("/analytics/shadow")
+def shadow_analytics_payload() -> JSONResponse:
+    from signals import shadow_report
+    return JSONResponse(shadow_report())

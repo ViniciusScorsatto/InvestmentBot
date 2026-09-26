@@ -37,7 +37,7 @@ from strategies import (
     evaluate_breakout,
     evaluate_trend_pullback,
 )
-from market_bars import completed_bars, aggregate_bars
+from market_bars import completed_bars, aggregate_bars, as_datetime
 from trade_utils import get_correlation_group
 
 
@@ -274,6 +274,9 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
 
 def scan_market(
     asset_classes: list[str] | None = None,
+    windows: dict[tuple[str, str], datetime] | None = None,
+    progress: dict[tuple[str, str, str], datetime] | None = None,
+    include_rejected: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     candidates: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
@@ -285,6 +288,7 @@ def scan_market(
         "filtered_by_score_and_r": 0,
         "filtered_by_learning_model": 0,
     }
+    completed_windows = []
     rule_failures: dict[str, int] = {}
     enabled_asset_classes = set(asset_classes or WATCHLIST.keys())
     regimes = _regime_by_asset_class(enabled_asset_classes)
@@ -292,6 +296,12 @@ def scan_market(
         if asset_class not in enabled_asset_classes:
             continue
         for asset in symbols:
+            if windows is not None and not any(
+                (expected := windows.get((asset_class,tf))) is not None
+                and ((previous := (progress or {}).get((asset,asset_class,tf))) is None or as_datetime(previous) < expected)
+                for tf in ("4h","1d")
+            ):
+                continue
             dataset = fetch_asset_data(asset, asset_class)
             daily_bars = dataset["1d"]
             four_hour_bars = dataset["4h"]
@@ -316,6 +326,21 @@ def scan_market(
                     }
                 )
                 continue
+            eligible_timeframes = []
+            for timeframe in ("4h", "1d"):
+                bars = dataset[timeframe]
+                if len(bars) < 60:
+                    continue
+                bar_end = as_datetime(bars[-1].get("end_timestamp",bars[-1]["timestamp"]))
+                if windows is not None:
+                    expected = windows.get((asset_class,timeframe))
+                    if expected is None or bar_end != expected:
+                        continue
+                    previous = (progress or {}).get((asset,asset_class,timeframe))
+                    if previous is not None and as_datetime(previous) >= bar_end:
+                        continue
+                eligible_timeframes.append(timeframe)
+                completed_windows.append({"asset":asset,"asset_class":asset_class,"timeframe":timeframe,"bar_end":bar_end.isoformat()})
             if regime == "neutral":
                 diagnostics.append(
                     {
@@ -336,7 +361,7 @@ def scan_market(
                 continue
             alignment = detect_market_alignment(daily_bars)
             bearish_alignment = detect_bearish_market_alignment(daily_bars)
-            for timeframe in ("4h", "1d"):
+            for timeframe in eligible_timeframes:
                 bars = dataset[timeframe]
                 if len(bars) < 60:
                     status = "insufficient_timeframe_history"
@@ -362,6 +387,7 @@ def scan_market(
                     )
                     if not trade:
                         continue
+                    trade["signal_bar_end"] = bars[-1].get("end_timestamp",bars[-1]["timestamp"])
                     trade["correlation_group"] = get_correlation_group(asset, asset_class)
                     trade["regime"] = regime
                     trade["model_feedback"] = _learning_feedback_for_trade(trade)
@@ -382,8 +408,9 @@ def scan_market(
                     score_ok = trade["score"] >= MIN_SCORE
                     r_ok = trade["R_multiple"] >= MIN_R_MULTIPLE
                     learning_ok = not trade["model_feedback"] or bool(trade["model_feedback"]["approved"])
-                    if trade["score"] >= MIN_SCORE and trade["R_multiple"] >= MIN_R_MULTIPLE and learning_ok:
+                    if score_ok and r_ok and (learning_ok or include_rejected):
                         candidates.append(trade)
+                    if score_ok and r_ok and learning_ok:
                         asset_candidates += 1
                         status = "candidate_found"
                         note = "At least one setup qualified"
@@ -435,7 +462,7 @@ def scan_market(
             )
     candidates.sort(key=lambda item: (item["combined_score"], item["score"], item["R_multiple"]), reverse=True)
     near_misses.sort(key=lambda item: (item["combined_score"], item["score"], item["R_multiple"]), reverse=True)
-    return candidates[:MAX_TRADES_PER_DAY], diagnostics, near_misses[:10], rejection_counts | {"rule_failures": rule_failures}
+    return candidates, diagnostics, near_misses[:10], rejection_counts | {"rule_failures": rule_failures, "completed_windows": completed_windows}
 
 
 def generate_trade_candidates(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:

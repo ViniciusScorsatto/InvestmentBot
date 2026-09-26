@@ -32,6 +32,7 @@ def get_db() -> Iterator[psycopg.Connection[Any]]:
 
 def initialize_db() -> None:
     with get_db() as connection:
+        connection.execute("SELECT pg_advisory_xact_lock(79312001)")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS trades (
@@ -92,6 +93,11 @@ def initialize_db() -> None:
         connection.execute("UPDATE trades SET partial_result_R = 0 WHERE partial_result_R IS NULL")
         connection.execute("UPDATE trades SET effective_stop_loss = stop_loss WHERE effective_stop_loss IS NULL")
         connection.execute("UPDATE trades SET runner_activated = false WHERE runner_activated IS NULL")
+        from migrations import upgrade
+        upgrade(connection)
+        from portfolio import adopt_legacy_positions, snapshot
+        adopt_legacy_positions(connection)
+        snapshot(connection)
 
 
 def ping_database() -> bool:

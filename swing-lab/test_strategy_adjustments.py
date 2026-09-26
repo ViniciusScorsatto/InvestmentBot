@@ -185,7 +185,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
 
         self.assertEqual(response, "ok")
         self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-25")
-        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "execution-v2-expectancy-v1")
+        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "portfolio-v1-signals-v1")
 
     def test_learning_model_does_not_block_until_specific_slice_has_enough_sample(self) -> None:
         rows = [
@@ -399,7 +399,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         ):
             candidates, _, _, rejection_counts = scanner.scan_market(asset_classes=["stock"])
 
-        self.assertEqual(len(candidates), 5)
+        self.assertEqual(len(candidates), 7)
         self.assertEqual(rejection_counts["filtered_by_learning_model"], 0)
         self.assertTrue(all(candidate["model_feedback"]["approved"] for candidate in candidates))
         self.assertTrue(all(candidate["model_feedback"]["confidence"] == "unavailable" for candidate in candidates))

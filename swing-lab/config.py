@@ -13,11 +13,11 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-STRATEGY_VERSION = "execution-v2-expectancy-v1"
-LAST_STRATEGY_CHANGE_LABEL = "Execution and Expectancy Upgrade"
+STRATEGY_VERSION = "portfolio-v1-signals-v1"
+LAST_STRATEGY_CHANGE_LABEL = "Portfolio and Signal Tracking Upgrade"
 LAST_STRATEGY_CHANGE_AT = "2026-09-26T00:00:00+12:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Completed session-aligned candles, chronological OHLC exits, explicit costs, and expectancy-based learning. "
+    "Calendar-aware scans, unique signal tracking, funded portfolio limits, and rejected-setup simulation. "
     "Current-version results exclude legacy trades."
 )
 # Illustrative per-fill costs, frozen in each new trade; calibrate to the intended venue.
@@ -25,6 +25,25 @@ SIM_FEE_BPS = float(os.getenv("SWING_LAB_SIM_FEE_BPS", "5"))
 SIM_SLIPPAGE_BPS = float(os.getenv("SWING_LAB_SIM_SLIPPAGE_BPS", "5"))
 if not (0 <= SIM_FEE_BPS < 10000 and 0 <= SIM_SLIPPAGE_BPS < 10000):
     raise ValueError("Simulation costs must be finite and between 0 and 10000 bps")
+
+
+# Simulation limits; persisted initial cash is not reset by later environment changes.
+PORTFOLIO_INITIAL_CASH = float(os.getenv("SWING_LAB_INITIAL_CASH", "10000"))
+PORTFOLIO_RISK_PER_TRADE = float(os.getenv("SWING_LAB_RISK_PER_TRADE", "0.01"))
+PORTFOLIO_MAX_RISK = float(os.getenv("SWING_LAB_MAX_PORTFOLIO_RISK", "0.05"))
+PORTFOLIO_MAX_GROSS = float(os.getenv("SWING_LAB_MAX_GROSS_EXPOSURE", "0.80"))
+PORTFOLIO_MAX_POSITION = float(os.getenv("SWING_LAB_MAX_POSITION_EXPOSURE", "0.20"))
+PORTFOLIO_MAX_GROUP = float(os.getenv("SWING_LAB_MAX_GROUP_EXPOSURE", "0.30"))
+PORTFOLIO_MAX_GROUP_POSITIONS = int(os.getenv("SWING_LAB_MAX_GROUP_POSITIONS", "1"))
+SCAN_GRACE_SECONDS = 120
+SCAN_MAX_LAG_MINUTES = 60
+if not (0 < PORTFOLIO_INITIAL_CASH < 1e15):
+    raise ValueError("Initial simulation cash must be positive and finite")
+if not all(0 < value <= 1 for value in (PORTFOLIO_RISK_PER_TRADE, PORTFOLIO_MAX_RISK,
+                                      PORTFOLIO_MAX_GROSS, PORTFOLIO_MAX_POSITION, PORTFOLIO_MAX_GROUP)):
+    raise ValueError("Portfolio fractions must be in (0, 1]")
+if PORTFOLIO_MAX_GROUP_POSITIONS < 1:
+    raise ValueError("Group position limit must be positive")
 
 
 MAX_TRADES_PER_DAY = 5

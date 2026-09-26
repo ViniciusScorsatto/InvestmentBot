@@ -9,7 +9,9 @@
     .wrap { max-width: 1240px; margin: 0 auto; padding: 32px 20px 60px; }
     nav a { margin-right: 16px; color: #0f766e; text-decoration: none; font-weight: bold; }
     .stack { display: grid; gap: 16px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .stack, .panel, .grid > *, .table-wrap { min-width: 0; }
+    .panel a { color: #0f766e; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
     .panel { background: #fffdf7; border: 1px solid #d8d3c4; border-radius: 14px; padding: 18px; }
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
     .summary-card { border: 1px solid #e4ddcb; border-radius: 12px; padding: 14px; background: #fff; }
@@ -56,6 +58,42 @@
     <h1>Analytics</h1>
 
     <div class="stack">
+      <section class="panel" aria-label="Simulated portfolio">
+        <h2>Simulated Portfolio</h2>
+        {% if portfolio %}
+        <p class="muted">Since portfolio adoption. Balances include all funded positions and estimated exit costs; the trade date filter below does not change these balances.</p>
+        <div class="summary-grid">
+          <div class="summary-card"><div class="summary-label">Net Equity</div><div class="summary-value">${{ "{:,.2f}".format(portfolio.equity) }}</div></div>
+          <div class="summary-card"><div class="summary-label">Available Cash</div><div class="summary-value">${{ "{:,.2f}".format(portfolio.available_cash) }}</div></div>
+          <div class="summary-card"><div class="summary-label">Reserved for Entries</div><div class="summary-value">${{ "{:,.2f}".format(portfolio.reserved_cash) }}</div></div>
+          <div class="summary-card"><div class="summary-label">Max Drawdown</div><div class="summary-value">{{ "%.2f"|format(portfolio.max_drawdown_pct) }}%</div></div>
+        </div>
+        <p class="muted">Gross exposure: ${{ "{:,.2f}".format(portfolio.gross_exposure) }} · Risk allocated: ${{ "{:,.2f}".format(portfolio.risk_exposure) }}</p>
+        {% if portfolio.stale_positions %}<p role="status">{{ portfolio.stale_positions }} positions have stale or missing bars. New allocations are paused until their marks recover.</p>{% endif %}
+        <p class="muted">Drawdown uses sampled net liquidation equity across concurrent positions, not intrabar portfolio lows.</p>
+        <a href="/analytics/portfolio">View portfolio history and exposure data</a>
+        {% else %}<p role="status">{{ research_error }}</p>{% endif %}
+      </section>
+      <section class="panel" aria-label="Shadow setup comparison">
+        <h2>Shadow Setup Comparison</h2>
+        {% if shadow %}
+        <p class="muted">Every qualifying signal is simulated with the same entry, exit and cost rules, including setups rejected by the model. Verdicts are saved when the signal is first observed.</p>
+        <p>{{ shadow.signals }} recorded · {{ shadow.open }} open · {{ shadow.cancelled }} cancelled · {{ shadow.data_gaps }} with missing bars</p>
+        <div class="table-wrap">
+          <table class="compact-table">
+            <thead><tr><th>Signal Group</th><th>Closed</th><th>Total Net R</th><th>Average Net R</th><th>Win Rate</th></tr></thead>
+            <tbody>
+            {% for label, row in [("All qualifying",shadow.baseline_all_qualifying),("Model approved",shadow.overlay_approved),("Model rejected",shadow.overlay_rejected),("Selected for portfolio",shadow.selected)] %}
+              <tr><td>{{ label }}</td><td>{{ row.closed_trades }}</td><td>{{ "%.2f"|format(row.total_R) }}</td><td>{{ "%.2f"|format(row.avg_R) if row.avg_R is not none else "—" }}</td><td>{{ "%.1f%%"|format(row.win_rate) if row.win_rate is not none else "—" }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Per-signal outcomes are not portfolio returns. These are prospective results only; signals from before tracking began are unavailable.</p>
+        <a href="/analytics/shadow">View shadow comparison data</a>
+        {% else %}<p role="status">{{ research_error }}</p>{% endif %}
+      </section>
+
       <div class="panel">
         <h2>Filter Range</h2>
         <form method="get" action="/analytics" class="filter-form">

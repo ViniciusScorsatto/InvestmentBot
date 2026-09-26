@@ -26,9 +26,9 @@ async def lifespan(_: FastAPI):
     initialize_db()
     backfill_missing_trade_results()
     logging.getLogger(__name__).info(
-        "Starting %s on database=%s telegram_configured=%s",
+        "Starting %s database_configured=%s telegram_configured=%s",
         APP_NAME,
-        DATABASE_URL.split("@")[-1] if DATABASE_URL else "missing",
+        bool(DATABASE_URL),
         bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
     )
     scheduler.start()
@@ -43,6 +43,4 @@ app.include_router(router)
 
 
 if __name__ == "__main__":
-    initialize_db()
-    backfill_missing_trade_results()
     uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=False)

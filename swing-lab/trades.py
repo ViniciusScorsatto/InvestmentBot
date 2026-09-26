@@ -5,9 +5,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from config import STRATEGY_VERSION
+from config import STRATEGY_VERSION, MAX_TRADES_PER_DAY, PREFERRED_TOP_SETUPS
 from execution import execution_settings, replay_bars, net_result, exit_fill
-from db import execute, fetch_all, fetch_one
+from db import execute, fetch_all, fetch_one, get_db
+import portfolio
+from signals import initial_state, record_signals, signal_id
 from learning_model import clear_learning_cache
 from scanner import fetch_asset_data, select_best_setups
 from telegram import notify_trade_closed, notify_new_trade
@@ -70,76 +72,72 @@ def get_open_trade(asset: str, timeframe: str) -> dict[str, Any] | None:
     return _row_to_trade(row) if row else None
 
 
-def create_trade(setup: dict[str, Any]) -> int | None:
-    if get_open_trade(setup["asset"], setup["timeframe"]):
+def _create_trade(connection, setup, now):
+    if setup.get("model_feedback") and not setup["model_feedback"]["approved"]:
         return None
-    opened_at = _now_utc()
-    metadata = dict(setup.get("components", {}))
-    metadata.update(strategy_version=STRATEGY_VERSION,
-                    execution=execution_settings(opened_at, setup["strategy"]))
-    trade_id = execute(
+    day_start = now.replace(hour=0,minute=0,second=0,microsecond=0)
+    if connection.execute("SELECT count(*) AS n FROM trades WHERE date_opened >= %s", (day_start,)).fetchone()["n"] >= MAX_TRADES_PER_DAY:
+        return None
+    if connection.execute("SELECT id FROM trades WHERE (asset=%s AND timeframe=%s AND status='open') OR signal_id=%s",
+                          (setup["asset"],setup["timeframe"],signal_id(setup))).fetchone():
+        return None
+    account = portfolio.lock_account(connection)
+    values = portfolio.book_values(account,portfolio._position_rows(connection),now)
+    plan = portfolio.allocation_plan(setup,values)
+    if plan is None:
+        return None
+    state = initial_state(setup,now)
+    row = connection.execute(
         """
-        INSERT INTO trades (
-            asset, asset_class, strategy, timeframe,
-            entry_price, stop_loss, target_price, current_price,
-            R_multiple, score, date_opened, status,
-            setup_notes, metadata_json, effective_stop_loss,
-            partial_taken, partial_result_R, runner_activated
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open', %s, %s, %s, false, 0, false)
-        RETURNING id
+        INSERT INTO trades(asset,asset_class,strategy,timeframe,entry_price,stop_loss,target_price,current_price,
+                           R_multiple,score,date_opened,status,setup_notes,metadata_json,effective_stop_loss,
+                           partial_taken,partial_result_R,runner_activated,signal_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'open',%s,%s,%s,false,0,false,%s)
+        ON CONFLICT DO NOTHING RETURNING id
         """,
-        (
-            setup["asset"],
-            setup["asset_class"],
-            setup["strategy"],
-            setup["timeframe"],
-            setup["entry_price"],
-            setup["stop_loss"],
-            setup["target_price"],
-            setup["entry_price"],
-            setup["R_multiple"],
-            setup["score"],
-            opened_at,
-            setup.get("setup_notes", ""),
-            json.dumps(metadata),
-            setup["stop_loss"],
-        ),
-    )
-    notify_new_trade(setup)
-    LOGGER.info("Created trade %s %s %s", trade_id, setup["asset"], setup["strategy"])
+        (setup["asset"],setup["asset_class"],setup["strategy"],setup["timeframe"],setup["entry_price"],
+         setup["stop_loss"],setup["target_price"],setup["entry_price"],setup["R_multiple"],setup["score"],
+         now,setup.get("setup_notes",""),json.dumps(state["metadata"]),setup["stop_loss"],state["signal_id"]),
+    ).fetchone()
+    if not row:
+        return None
+    trade_id = row["id"]
+    portfolio.reserve(connection,trade_id,plan)
+    connection.execute("UPDATE signals SET selected_trade_id=%s WHERE signal_id=%s", (trade_id,state["signal_id"]))
+    notify_new_trade(dict(state,id=trade_id), connection=connection)
     return trade_id
 
 
-def create_trades_from_candidates(candidates: list[dict[str, Any]], limit: int | None = None) -> list[int]:
-    created_ids: list[int] = []
-    used_groups = _correlation_groups_opened_today()
-    eligible_candidates = [
-        setup
-        for setup in candidates
-        if (setup.get("correlation_group") or get_correlation_group(setup["asset"], setup["asset_class"])) not in used_groups
-    ]
-    for setup in select_best_setups(eligible_candidates):
-        if limit is not None and len(created_ids) >= limit:
-            break
-        group = setup.get("correlation_group") or get_correlation_group(setup["asset"], setup["asset_class"])
-        trade_id = create_trade(setup)
-        if trade_id:
-            created_ids.append(trade_id)
-            used_groups.add(group)
-    return created_ids
+def create_trade(setup: dict[str, Any]) -> int | None:
+    created = create_trades_from_candidates([setup],limit=1)
+    return created[0] if created else None
 
 
-def _correlation_groups_opened_today() -> set[str]:
-    day_start = _now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
-    rows = fetch_all(
-        """
-        SELECT asset, asset_class
-        FROM trades
-        WHERE date_opened >= %s
-        """,
-        (day_start,),
-    )
-    return {get_correlation_group(row["asset"], row["asset_class"]) for row in rows}
+def create_trades_from_candidates(candidates: list[dict[str, Any]], limit: int | None = None,
+                                  completed_windows: list[dict[str, Any]] | None = None) -> list[int]:
+    now = _now_utc()
+    created = []
+    with get_db() as connection:
+        # One account row serializes eligibility, reservations, and the daily limit.
+        portfolio.lock_account(connection)
+        portfolio.adopt_legacy_positions(connection)
+        fresh = record_signals(connection,candidates,now)
+        fresh.sort(key=lambda t:(t.get("combined_score",t["score"]),t["score"],t["R_multiple"]),reverse=True)
+        cap = min(PREFERRED_TOP_SETUPS, limit if limit is not None else PREFERRED_TOP_SETUPS)
+        for setup in fresh:
+            if len(created) >= cap:
+                break
+            trade_id = _create_trade(connection,setup,now)
+            if trade_id is not None:
+                created.append(trade_id)
+        for window in completed_windows or []:
+            connection.execute("""
+                INSERT INTO scan_progress(asset,asset_class,timeframe,bar_end) VALUES (%s,%s,%s,%s)
+                ON CONFLICT(asset,asset_class,timeframe) DO UPDATE
+                SET bar_end=GREATEST(scan_progress.bar_end,excluded.bar_end)
+            """, (window["asset"],window["asset_class"],window["timeframe"],window["bar_end"]))
+        portfolio.snapshot(connection,now)
+    return created
 
 
 def list_trades(
@@ -243,30 +241,32 @@ def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str,
         if trade == original:
             continue
         # Persist fills, state and cursor together; a failed write is safe to replay.
-        row_id = execute(
-            """
-            UPDATE trades SET entry_price = %s, R_multiple = %s,
-                status = %s, current_price = %s, date_closed = %s, result_R = %s,
-                partial_taken = %s, partial_taken_at = %s, partial_price = %s,
-                partial_result_R = %s, effective_stop_loss = %s,
-                runner_activated = %s, runner_activated_at = %s, metadata_json = %s
-            WHERE id = %s AND status = 'open' AND metadata_json IS NOT DISTINCT FROM %s
-            RETURNING id
-            """,
-            (trade["entry_price"], trade["R_multiple"], trade["status"], trade.get("current_price"),
-             trade.get("date_closed"), trade.get("result_R"), bool(trade.get("partial_taken")),
-             trade.get("partial_taken_at"), trade.get("partial_price"), trade.get("partial_result_R", 0),
-             trade.get("effective_stop_loss", trade["stop_loss"]), bool(trade.get("runner_activated")),
-             trade.get("runner_activated_at"), json.dumps(trade["metadata"]), trade["id"],
-             original.get("metadata_json")),
-        )
-        if row_id is None:
-            continue
+        with get_db() as connection:
+            portfolio.lock_account(connection)
+            # Compare-and-swap under the same transaction as cash and outbox writes.
+            row = connection.execute(
+                """
+                UPDATE trades SET entry_price=%s,R_multiple=%s,status=%s,current_price=%s,date_closed=%s,result_R=%s,
+                    partial_taken=%s,partial_taken_at=%s,partial_price=%s,partial_result_R=%s,effective_stop_loss=%s,
+                    runner_activated=%s,runner_activated_at=%s,metadata_json=%s
+                WHERE id=%s AND status='open' AND metadata_json IS NOT DISTINCT FROM %s RETURNING id
+                """,
+                (trade["entry_price"],trade["R_multiple"],trade["status"],trade.get("current_price"),trade.get("date_closed"),
+                 trade.get("result_R"),bool(trade.get("partial_taken")),trade.get("partial_taken_at"),trade.get("partial_price"),
+                 trade.get("partial_result_R",0),trade.get("effective_stop_loss",trade["stop_loss"]),
+                 bool(trade.get("runner_activated")),trade.get("runner_activated_at"),json.dumps(trade["metadata"]),
+                 trade["id"],original.get("metadata_json")),
+            ).fetchone()
+            if row is None:
+                continue
+            portfolio.apply_events(connection,trade)
+            if trade["status"] != "open" and trade["result_R"] is not None:
+                notify_trade_closed(trade,trade["status"],trade["result_R"],connection=connection)
         if trade["status"] != "open":
             clear_learning_cache()
-            if trade["result_R"] is not None:
-                notify_trade_closed(trade, trade["status"], trade["result_R"])
         updated.append(trade)
+    with get_db() as connection:
+        portfolio.snapshot(connection,now)
     return updated
 
 

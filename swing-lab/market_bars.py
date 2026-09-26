@@ -113,3 +113,32 @@ def next_hour_start(cursor: datetime, asset_class: str) -> datetime:
         if candidate < end:
             return candidate
     raise ValueError("No exchange session found within 15 days")
+
+
+def scan_windows(now: datetime) -> dict[tuple[str, str], datetime]:
+    """Latest recently closed signal candles, after a provider publication grace period."""
+    from config import SCAN_GRACE_SECONDS, SCAN_MAX_LAG_MINUTES
+    ready = now - timedelta(seconds=SCAN_GRACE_SECONDS)
+    cutoff = now - timedelta(minutes=SCAN_MAX_LAG_MINUTES)
+    result = {}
+    midnight = ready.replace(hour=0, minute=0, second=0, microsecond=0)
+    for timeframe, end in (("4h",midnight+timedelta(hours=(ready.hour//4)*4)),("1d",midnight)):
+        if cutoff <= end <= ready:
+            result[("crypto",timeframe)] = end
+    day = ready.astimezone(NY).date()
+    # The previous date covers a restart just after UTC midnight in other zones.
+    for offset in (1,0):
+        bounds = session_bounds((day-timedelta(days=offset)).isoformat())
+        if bounds is None:
+            continue
+        op, close = bounds
+        ends = [min(op+timedelta(hours=4),close)]
+        if close > ends[0]:
+            ends.append(close)
+        for asset_class in ("stock","etf"):
+            for end in ends:
+                if cutoff <= end <= ready:
+                    result[(asset_class,"4h")] = end
+            if cutoff <= close <= ready:
+                result[(asset_class,"1d")] = close
+    return result

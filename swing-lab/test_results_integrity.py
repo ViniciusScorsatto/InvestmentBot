@@ -4,7 +4,9 @@ import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from contextlib import nullcontext
+import signals
 
 # Reuse the existing project's isolated web/database stubs.
 import test_strategy_adjustments
@@ -261,23 +263,22 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(result["partial_result_R"],.5)
         self.assertIn("migration_note",result["metadata"]["execution"])
 
-    def test_updater_persists_cursor_and_fills_in_one_write(self):
+    def test_updater_persists_state_with_ledger_and_outbox(self):
         trade=position()
-        with patch.object(trades,"list_trades",return_value=[trade]), patch.object(trades,"fetch_asset_data",return_value={"execution":[bar(low=80)]}), patch.object(trades,"_now_utc",return_value=T0+timedelta(hours=2)), patch.object(trades,"execute",return_value=1) as write, patch.object(trades,"notify_trade_closed") as notify:
+        connection=MagicMock()
+        connection.execute.return_value.fetchone.return_value={"id":1}
+        with patch.object(trades,"list_trades",return_value=[trade]), patch.object(trades,"fetch_asset_data",return_value={"execution":[bar(low=80)]}), patch.object(trades,"_now_utc",return_value=T0+timedelta(hours=2)), patch.object(trades,"get_db",side_effect=lambda:nullcontext(connection)), patch.object(trades.portfolio,"lock_account"), patch.object(trades.portfolio,"apply_events") as ledger, patch.object(trades.portfolio,"snapshot"), patch.object(trades,"notify_trade_closed") as notify:
             result=trades.update_open_trades()
         self.assertEqual(len(result),1)
-        self.assertEqual(write.call_count,1)
-        self.assertIn("metadata_json = %s",write.call_args.args[0])
-        self.assertEqual(notify.call_count,1)
+        self.assertEqual(connection.execute.call_count,1)
+        ledger.assert_called_once()
+        self.assertIs(notify.call_args.kwargs["connection"],connection)
 
-    def test_trade_creation_freezes_version_costs_and_pending_entry(self):
-        setup=position()
-        with patch.object(trades,"get_open_trade",return_value=None), patch.object(trades,"_now_utc",return_value=T0), patch.object(trades,"execute",return_value=7) as write, patch.object(trades,"notify_new_trade"):
-            self.assertEqual(trades.create_trade(setup),7)
-        metadata=json.loads(write.call_args.args[1][12])
-        self.assertEqual(metadata["strategy_version"],config.STRATEGY_VERSION)
-        self.assertTrue(metadata["execution"]["pending_entry"])
-        self.assertEqual(metadata["execution"]["fee_bps"],config.SIM_FEE_BPS)
+    def test_signal_initial_state_freezes_costs_and_version(self):
+        state=signals.initial_state(dict(position(),signal_bar_end=T0.isoformat()),T0)
+        self.assertEqual(state["metadata"]["strategy_version"],config.STRATEGY_VERSION)
+        self.assertTrue(state["metadata"]["execution"]["pending_entry"])
+        self.assertEqual(state["metadata"]["execution"]["fee_bps"],config.SIM_FEE_BPS)
 
     def test_equity_replay_crosses_weekend_without_false_gap(self):
         trade=position(); trade["asset_class"]="stock"
@@ -289,7 +290,9 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["execution"]["cursor"],(monday+timedelta(hours=1)).isoformat())
 
     def test_failed_compare_and_swap_does_not_notify(self):
-        with patch.object(trades,"list_trades",return_value=[position()]), patch.object(trades,"fetch_asset_data",return_value={"execution":[bar(low=80)]}), patch.object(trades,"_now_utc",return_value=T0+timedelta(hours=2)), patch.object(trades,"execute",return_value=None), patch.object(trades,"notify_trade_closed") as notify:
+        connection=MagicMock()
+        connection.execute.return_value.fetchone.return_value=None
+        with patch.object(trades,"list_trades",return_value=[position()]), patch.object(trades,"fetch_asset_data",return_value={"execution":[bar(low=80)]}), patch.object(trades,"_now_utc",return_value=T0+timedelta(hours=2)), patch.object(trades,"get_db",side_effect=lambda:nullcontext(connection)), patch.object(trades.portfolio,"lock_account"), patch.object(trades.portfolio,"snapshot"), patch.object(trades,"notify_trade_closed") as notify:
             self.assertEqual(trades.update_open_trades(),[])
         notify.assert_not_called()
 
