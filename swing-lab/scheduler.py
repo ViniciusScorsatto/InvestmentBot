@@ -91,13 +91,10 @@ class SwingLabScheduler:
 
     def run_update_cycle(self, now_utc: datetime | None = None) -> None:
         now_utc = now_utc or datetime.now(tz=timezone.utc)
-        updated = update_open_trades(asset_classes=["crypto"])
+        # Completed bars can arrive after the close; replay is idempotent outside sessions.
+        updated = update_open_trades(asset_classes=["crypto", "stock", "etf"])
         mark_update()
-        if self._is_us_market_open(now_utc):
-            updated.extend(update_open_trades(asset_classes=["stock", "etf"]))
-            LOGGER.info("Updated %s open trades across crypto, stocks, and ETFs", len(updated))
-            return
-        LOGGER.info("Updated %s open crypto trades outside US market hours", len(updated))
+        LOGGER.info("Updated %s open trades", len(updated))
 
     def run_daily_summary(self) -> None:
         summary = calculate_summary()

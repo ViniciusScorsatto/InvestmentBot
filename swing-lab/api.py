@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from config import APP_NAME, LAST_STRATEGY_CHANGE_AT, TEMPLATES_DIR
+from config import APP_NAME, LAST_STRATEGY_CHANGE_AT, STRATEGY_VERSION, TEMPLATES_DIR
 from metrics import (
     analytics_payload,
     analytics_since_strategy_change,
@@ -95,9 +96,11 @@ def analytics_page(
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
 ) -> HTMLResponse:
-    if not start_date and not end_date:
-        start_date = LAST_STRATEGY_CHANGE_AT[:10]
-    filtered = analytics_payload(start_date=start_date, end_date=end_date)
+    default_view = not start_date and not end_date
+    if default_view:
+        start_date = datetime.fromisoformat(LAST_STRATEGY_CHANGE_AT).astimezone(timezone.utc).date().isoformat()
+    filtered = analytics_payload(start_date=start_date, end_date=end_date,
+                                 strategy_version=STRATEGY_VERSION if default_view else None)
     since_change = analytics_since_strategy_change()
     try:
         learning_rows = learning_model_rows()
@@ -139,3 +142,9 @@ def learning_model_payload() -> JSONResponse:
             "all": rows,
         }
     )
+
+
+@router.get("/analytics/learning/evaluation")
+def learning_evaluation_payload() -> JSONResponse:
+    from evaluation import walk_forward_evaluation
+    return JSONResponse(walk_forward_evaluation())

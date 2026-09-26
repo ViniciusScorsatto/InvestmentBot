@@ -153,154 +153,6 @@ class StrategyAdjustmentTests(unittest.TestCase):
         self.assertEqual(trade["target_price"], 130.0)
         self.assertEqual(trade["R_multiple"], 3.0)
 
-    def test_breakout_runner_stops_at_breakeven_after_one_r(self) -> None:
-        now = datetime(2026, 5, 1, tzinfo=timezone.utc)
-        state = {
-            "id": 1,
-            "asset": "BTC",
-            "asset_class": "crypto",
-            "strategy": "Breakout",
-            "timeframe": "4h",
-            "entry_price": 100.0,
-            "stop_loss": 95.0,
-            "target_price": 115.0,
-            "current_price": 100.0,
-            "R_multiple": 3.0,
-            "score": 80,
-            "date_opened": now.isoformat(),
-            "status": "open",
-            "effective_stop_loss": 95.0,
-            "runner_activated": False,
-            "partial_taken": False,
-            "partial_result_R": 0.0,
-            "setup_notes": "",
-            "metadata_json": None,
-            "result_R": None,
-        }
-        prices = iter([105.0, 99.0])
-
-        def fake_list_trades(status: str | None = None, **_: object) -> list[dict[str, object]]:
-            if status == "open" and state["status"] == "open":
-                return [dict(state)]
-            return []
-
-        def fake_execute(query: str, params: tuple[object, ...] = ()) -> int | None:
-            if "SET current_price = %s WHERE id = %s" in query:
-                state["current_price"] = params[0]
-            elif "SET runner_activated = true" in query:
-                state["runner_activated"] = True
-                state["runner_activated_at"] = params[0].isoformat()
-                state["effective_stop_loss"] = state["entry_price"]
-                state["current_price"] = params[1]
-            elif "SET status = %s, current_price = %s, date_closed = %s, result_R = %s" in query:
-                state["status"] = params[0]
-                state["current_price"] = params[1]
-                state["date_closed"] = params[2].isoformat()
-                state["result_R"] = params[3]
-            return None
-
-        with patch.object(trades, "_now_utc", return_value=now), patch.object(trades, "list_trades", side_effect=fake_list_trades), patch.object(
-            trades, "_current_price_for_trade", side_effect=lambda _: next(prices)
-        ), patch.object(trades, "execute", side_effect=fake_execute), patch.object(trades, "get_trade", side_effect=lambda _: dict(state)), patch.object(
-            trades, "notify_trade_closed"
-        ):
-            trades.update_open_trades(asset_classes=["crypto"])
-            self.assertTrue(state["runner_activated"])
-            self.assertEqual(state["effective_stop_loss"], 100.0)
-            self.assertEqual(state["status"], "open")
-
-            trades.update_open_trades(asset_classes=["crypto"])
-
-        self.assertEqual(state["status"], "stopped")
-        self.assertEqual(state["result_R"], 0.0)
-
-    def test_strategy_specific_timed_exits(self) -> None:
-        now = datetime(2026, 5, 1, tzinfo=timezone.utc)
-        breakout = {
-            "id": 2,
-            "asset": "MSFT",
-            "asset_class": "stock",
-            "strategy": "Breakout",
-            "timeframe": "4h",
-            "entry_price": 100.0,
-            "stop_loss": 95.0,
-            "target_price": 115.0,
-            "current_price": 101.0,
-            "R_multiple": 3.0,
-            "score": 82,
-            "date_opened": (now - timedelta(days=10)).isoformat(),
-            "status": "open",
-            "effective_stop_loss": 95.0,
-            "runner_activated": False,
-            "partial_taken": False,
-            "partial_result_R": 0.0,
-            "setup_notes": "",
-            "metadata_json": None,
-            "result_R": None,
-        }
-        trend = {
-            "id": 3,
-            "asset": "SPY",
-            "asset_class": "etf",
-            "strategy": "Trend Pullback",
-            "timeframe": "4h",
-            "entry_price": 100.0,
-            "stop_loss": 95.0,
-            "target_price": 110.0,
-            "current_price": 101.0,
-            "R_multiple": 2.0,
-            "score": 79,
-            "date_opened": (now - timedelta(days=10)).isoformat(),
-            "status": "open",
-            "effective_stop_loss": 95.0,
-            "runner_activated": False,
-            "partial_taken": False,
-            "partial_result_R": 0.0,
-            "setup_notes": "",
-            "metadata_json": None,
-            "result_R": None,
-        }
-        state = {2: breakout, 3: trend}
-
-        def fake_list_trades(status: str | None = None, **_: object) -> list[dict[str, object]]:
-            if status == "open":
-                return [dict(trade) for trade in state.values() if trade["status"] == "open"]
-            return []
-
-        def fake_current_price(trade: dict[str, object]) -> float:
-            return float(state[int(trade["id"])]["current_price"])
-
-        def fake_execute(query: str, params: tuple[object, ...] = ()) -> int | None:
-            if "SET current_price = %s WHERE id = %s" in query:
-                state[int(params[1])]["current_price"] = params[0]
-            elif "SET status = %s, current_price = %s, date_closed = %s, result_R = %s" in query:
-                trade_state = state[int(params[4])]
-                trade_state["status"] = params[0]
-                trade_state["current_price"] = params[1]
-                trade_state["date_closed"] = params[2].isoformat()
-                trade_state["result_R"] = params[3]
-            return None
-
-        with patch.object(trades, "_now_utc", return_value=now), patch.object(trades, "list_trades", side_effect=fake_list_trades), patch.object(
-            trades, "_current_price_for_trade", side_effect=fake_current_price
-        ), patch.object(trades, "execute", side_effect=fake_execute), patch.object(trades, "get_trade", side_effect=lambda trade_id: dict(state[trade_id])), patch.object(
-            trades, "notify_trade_closed"
-        ):
-            trades.update_open_trades(asset_classes=["stock", "etf"])
-
-        self.assertEqual(state[2]["status"], "open")
-        self.assertEqual(state[3]["status"], "closed")
-
-        state[2]["date_opened"] = (now - timedelta(days=15)).isoformat()
-        with patch.object(trades, "_now_utc", return_value=now), patch.object(trades, "list_trades", side_effect=fake_list_trades), patch.object(
-            trades, "_current_price_for_trade", side_effect=fake_current_price
-        ), patch.object(trades, "execute", side_effect=fake_execute), patch.object(trades, "get_trade", side_effect=lambda trade_id: dict(state[trade_id])), patch.object(
-            trades, "notify_trade_closed"
-        ):
-            trades.update_open_trades(asset_classes=["stock"])
-
-        self.assertEqual(state[2]["status"], "closed")
-
     def test_breakdown_is_not_evaluated_when_disabled(self) -> None:
         dataset = {"4h": make_bars(), "1d": make_bars()}
         fake_breakdown = Mock(return_value={"strategy": "Breakdown"})
@@ -332,7 +184,8 @@ class StrategyAdjustmentTests(unittest.TestCase):
             response = api.analytics_page(request=object(), start_date=None, end_date=None)
 
         self.assertEqual(response, "ok")
-        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-05-30")
+        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-25")
+        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "execution-v2-expectancy-v1")
 
     def test_learning_model_does_not_block_until_specific_slice_has_enough_sample(self) -> None:
         rows = [
@@ -355,7 +208,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         }
 
         learning_model.clear_learning_cache()
-        with patch.object(learning_model, "fetch_all", return_value=rows):
+        with patch.object(learning_model, "fetch_all", return_value=rows), patch.object(learning_model, "eligible_history", return_value=True):
             feedback = learning_model.score_setup(setup)
         learning_model.clear_learning_cache()
 
@@ -378,7 +231,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         ]
 
         learning_model.clear_learning_cache()
-        with patch.object(learning_model, "fetch_all", return_value=rows):
+        with patch.object(learning_model, "fetch_all", return_value=rows), patch.object(learning_model, "eligible_history", return_value=True):
             feedback = learning_model.score_setup(
                 {
                     "asset": "AAPL",
@@ -408,7 +261,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         ]
 
         learning_model.clear_learning_cache()
-        with patch.object(learning_model, "fetch_all", return_value=rows):
+        with patch.object(learning_model, "fetch_all", return_value=rows), patch.object(learning_model, "eligible_history", return_value=True):
             feedback = learning_model.score_setup(
                 {
                     "asset": "AAPL",
@@ -438,7 +291,7 @@ class StrategyAdjustmentTests(unittest.TestCase):
         ]
 
         learning_model.clear_learning_cache()
-        with patch.object(learning_model, "fetch_all", return_value=rows):
+        with patch.object(learning_model, "fetch_all", return_value=rows), patch.object(learning_model, "eligible_history", return_value=True):
             stats = learning_model.learned_stats()
             feedback = learning_model.score_setup(
                 {

@@ -37,6 +37,7 @@ from strategies import (
     evaluate_breakout,
     evaluate_trend_pullback,
 )
+from market_bars import completed_bars, aggregate_bars
 from trade_utils import get_correlation_group
 
 
@@ -76,23 +77,9 @@ def _to_iso(timestamp: int | float | str) -> str:
     return datetime.fromtimestamp(int(float(timestamp)), tz=timezone.utc).isoformat()
 
 
-def _aggregate_bars(bars: list[dict[str, Any]], group_size: int) -> list[dict[str, Any]]:
-    aggregated: list[dict[str, Any]] = []
-    for index in range(0, len(bars), group_size):
-        chunk = bars[index : index + group_size]
-        if len(chunk) < group_size:
-            continue
-        aggregated.append(
-            {
-                "timestamp": chunk[-1]["timestamp"],
-                "open": chunk[0]["open"],
-                "high": max(item["high"] for item in chunk),
-                "low": min(item["low"] for item in chunk),
-                "close": chunk[-1]["close"],
-                "volume": sum(item["volume"] for item in chunk),
-            }
-        )
-    return aggregated
+def _aggregate_bars(bars: list[dict[str, Any]], group_size: int,
+                    asset_class: str = "crypto") -> list[dict[str, Any]]:
+    return aggregate_bars(completed_bars(bars, 60, asset_class), group_size, asset_class)
 
 
 def _detect_regime(daily_bars: list[dict[str, Any]]) -> str:
@@ -146,7 +133,8 @@ def _cached_market_data(asset: str, asset_class: str) -> dict[str, list[dict[str
         fetched_at = datetime.fromisoformat(fetched_at)
     if datetime.now(tz=timezone.utc) - fetched_at > timedelta(seconds=cache_ttl_for(asset_class)):
         return None
-    return json.loads(row["payload_json"])
+    payload = json.loads(row["payload_json"])
+    return payload if "execution" in payload else None
 
 
 def _store_market_data(asset: str, asset_class: str, payload: dict[str, list[dict[str, Any]]]) -> None:
@@ -172,7 +160,8 @@ def _most_recent_cached_market_data(asset: str, asset_class: str) -> dict[str, l
     )
     if not row:
         return None
-    return json.loads(row["payload_json"])
+    payload = json.loads(row["payload_json"])
+    return payload if "execution" in payload else None
 
 
 def _respect_crypto_rate_limit() -> None:
@@ -265,20 +254,21 @@ def fetch_asset_data(asset: str, asset_class: str) -> dict[str, list[dict[str, A
         if asset_class == "crypto":
             hourly = _fetch_kraken_chart(asset, interval_minutes=60)
             daily = _fetch_kraken_chart(asset, interval_minutes=1440)
-            four_hour = _aggregate_bars(hourly, 4)
+            four_hour = _aggregate_bars(hourly, 4, asset_class)
         else:
             hourly = _fetch_yahoo_chart(asset, interval="1h", range_value="6mo")
             daily = _fetch_yahoo_chart(asset, interval="1d", range_value="1y")
-            four_hour = _aggregate_bars(hourly, 4)
-        payload = {"4h": four_hour, "1d": daily}
+            four_hour = _aggregate_bars(hourly, 4, asset_class)
+        payload = {"4h": four_hour, "1d": completed_bars(daily, 1440, asset_class),
+                   "execution": completed_bars(hourly, 60, asset_class)}
         _store_market_data(asset, asset_class, payload)
         return payload
     except requests.RequestException as exc:
         LOGGER.warning("Failed to fetch data for %s: %s", asset, exc)
         cached_fallback = _most_recent_cached_market_data(asset, asset_class)
         if cached_fallback is not None:
-            LOGGER.info("Using stale cached market data for %s after fetch failure", asset)
-            return cached_fallback
+            LOGGER.info("Replaying cached execution bars only for %s after fetch failure", asset)
+            return {"4h": [], "1d": [], "execution": cached_fallback["execution"]}
         return json.loads(default_cached_dataset())
 
 
@@ -376,7 +366,8 @@ def scan_market(
                     trade["regime"] = regime
                     trade["model_feedback"] = _learning_feedback_for_trade(trade)
                     if trade["model_feedback"]:
-                        model_weight = max(0.0, min(1.0, LEARNING_MODEL_WEIGHT))
+                        model_weight = (max(0.0, min(1.0, LEARNING_MODEL_WEIGHT))
+                                        if trade["model_feedback"]["confidence"] == "active" else 0.0)
                         trade["combined_score"] = int(
                             round((trade["score"] * (1 - model_weight)) + (trade["model_feedback"]["model_score"] * model_weight))
                         )

@@ -5,7 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from config import strategy_max_trade_duration_days
+from config import STRATEGY_VERSION
+from execution import execution_settings, replay_bars, net_result, exit_fill
 from db import execute, fetch_all, fetch_one
 from learning_model import clear_learning_cache
 from scanner import fetch_asset_data, select_best_setups
@@ -20,6 +21,7 @@ STATUS_LABELS = {
     "stopped": "Stopped",
     "target_hit": "Target Hit",
     "closed": "Timed Exit",
+    "cancelled": "Entry Cancelled",
 }
 DISPLAY_NOTIONAL_USD = 100.0
 
@@ -71,6 +73,10 @@ def get_open_trade(asset: str, timeframe: str) -> dict[str, Any] | None:
 def create_trade(setup: dict[str, Any]) -> int | None:
     if get_open_trade(setup["asset"], setup["timeframe"]):
         return None
+    opened_at = _now_utc()
+    metadata = dict(setup.get("components", {}))
+    metadata.update(strategy_version=STRATEGY_VERSION,
+                    execution=execution_settings(opened_at, setup["strategy"]))
     trade_id = execute(
         """
         INSERT INTO trades (
@@ -93,9 +99,9 @@ def create_trade(setup: dict[str, Any]) -> int | None:
             setup["entry_price"],
             setup["R_multiple"],
             setup["score"],
-            _now_utc(),
+            opened_at,
             setup.get("setup_notes", ""),
-            json.dumps(setup.get("components", {})),
+            json.dumps(metadata),
             setup["stop_loss"],
         ),
     )
@@ -174,68 +180,6 @@ def get_trade(trade_id: int) -> dict[str, Any] | None:
     return _row_to_trade(row) if row else None
 
 
-def _current_price_for_trade(trade: dict[str, Any]) -> float | None:
-    dataset = fetch_asset_data(trade["asset"], trade["asset_class"])
-    bars = dataset["4h"] if trade["timeframe"] == "4h" else dataset["1d"]
-    if not bars:
-        return None
-    return float(bars[-1]["close"])
-
-
-def _close_trade(trade: dict[str, Any], status: str, current_price: float, result_r: float) -> None:
-    execute(
-        """
-        UPDATE trades
-        SET status = %s, current_price = %s, date_closed = %s, result_R = %s
-        WHERE id = %s
-        """,
-        (status, current_price, _now_utc(), round(result_r, 2), trade["id"]),
-    )
-    clear_learning_cache()
-    notify_trade_closed(trade, status, result_r)
-    LOGGER.info("Closed trade %s with status %s", trade["id"], status)
-
-
-def _mark_legacy_partial_taken(trade: dict[str, Any], current_price: float) -> dict[str, Any]:
-    execute(
-        """
-        UPDATE trades
-        SET partial_taken = true,
-            partial_taken_at = %s,
-            partial_price = %s,
-            partial_result_R = 0.5,
-            effective_stop_loss = entry_price,
-            current_price = %s
-        WHERE id = %s
-        """,
-        (_now_utc(), current_price, current_price, trade["id"]),
-    )
-    updated = get_trade(trade["id"]) or trade
-    LOGGER.info("Partial profit taken for trade %s at %s", trade["id"], current_price)
-    return updated
-
-
-def _mark_runner_activated(trade: dict[str, Any], current_price: float) -> dict[str, Any]:
-    execute(
-        """
-        UPDATE trades
-        SET runner_activated = true,
-            runner_activated_at = %s,
-            effective_stop_loss = entry_price,
-            current_price = %s
-        WHERE id = %s
-        """,
-        (_now_utc(), current_price, trade["id"]),
-    )
-    updated = get_trade(trade["id"]) or trade
-    LOGGER.info("Runner mode activated for trade %s at %s", trade["id"], current_price)
-    return updated
-
-
-def _is_breakout_runner_strategy(strategy: str) -> bool:
-    return strategy == "Breakout"
-
-
 def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
     current_price = trade.get("current_price")
     entry_price = trade.get("entry_price")
@@ -257,6 +201,9 @@ def _compute_result_r_for_trade(trade: dict[str, Any]) -> float | None:
     runner_activated = bool(trade.get("runner_activated"))
     partial_taken = bool(trade.get("partial_taken"))
     partial_result_r = float(trade.get("partial_result_R") or 0)
+    if (trade.get("metadata", {}).get("execution") and status in ("stopped", "target_hit", "closed")
+            and current_price is not None):
+        return net_result(trade, current_price)
     if status == "stopped":
         if runner_activated:
             return 0.0
@@ -289,81 +236,50 @@ def resolve_result_r(trade: dict[str, Any]) -> float | None:
 
 def update_open_trades(asset_classes: list[str] | None = None) -> list[dict[str, Any]]:
     updated: list[dict[str, Any]] = []
-    for trade in list_trades(status="open", asset_classes=asset_classes):
-        current_price = _current_price_for_trade(trade)
-        if current_price is None:
+    now = _now_utc()
+    for original in list_trades(status="open", asset_classes=asset_classes):
+        dataset = fetch_asset_data(original["asset"], original["asset_class"])
+        trade = replay_bars(original, dataset.get("execution", []), now)
+        if trade == original:
             continue
-
-        execute("UPDATE trades SET current_price = %s WHERE id = %s", (current_price, trade["id"]))
-        direction = get_trade_direction(trade["strategy"])
-        if direction == "Long":
-            risk = trade["entry_price"] - trade["stop_loss"]
-            partial_trigger = trade["entry_price"] + risk
-        else:
-            risk = trade["stop_loss"] - trade["entry_price"]
-            partial_trigger = trade["entry_price"] - risk
-        if risk <= 0:
+        # Persist fills, state and cursor together; a failed write is safe to replay.
+        row_id = execute(
+            """
+            UPDATE trades SET entry_price = %s, R_multiple = %s,
+                status = %s, current_price = %s, date_closed = %s, result_R = %s,
+                partial_taken = %s, partial_taken_at = %s, partial_price = %s,
+                partial_result_R = %s, effective_stop_loss = %s,
+                runner_activated = %s, runner_activated_at = %s, metadata_json = %s
+            WHERE id = %s AND status = 'open' AND metadata_json IS NOT DISTINCT FROM %s
+            RETURNING id
+            """,
+            (trade["entry_price"], trade["R_multiple"], trade["status"], trade.get("current_price"),
+             trade.get("date_closed"), trade.get("result_R"), bool(trade.get("partial_taken")),
+             trade.get("partial_taken_at"), trade.get("partial_price"), trade.get("partial_result_R", 0),
+             trade.get("effective_stop_loss", trade["stop_loss"]), bool(trade.get("runner_activated")),
+             trade.get("runner_activated_at"), json.dumps(trade["metadata"]), trade["id"],
+             original.get("metadata_json")),
+        )
+        if row_id is None:
             continue
-
-        runner_activated = bool(trade.get("runner_activated"))
-        partial_taken = bool(trade.get("partial_taken"))
-        partial_result_r = float(trade.get("partial_result_R") or 0)
-        effective_stop = trade.get("effective_stop_loss") or trade["stop_loss"]
-        days_open = (_now_utc() - _coerce_datetime(trade["date_opened"])).days
-        max_duration_days = strategy_max_trade_duration_days(trade["strategy"])
-        if direction == "Long":
-            if (
-                _is_breakout_runner_strategy(trade["strategy"])
-                and not runner_activated
-                and not partial_taken
-                and current_price >= partial_trigger
-            ):
-                trade = _mark_runner_activated(trade, current_price)
-                runner_activated = True
-                effective_stop = trade["entry_price"]
-            elif not _is_breakout_runner_strategy(trade["strategy"]) and not partial_taken and current_price >= partial_trigger:
-                trade = _mark_legacy_partial_taken(trade, current_price)
-                partial_taken = True
-                partial_result_r = 0.5
-                effective_stop = trade["entry_price"]
-
-            if current_price <= effective_stop:
-                if runner_activated:
-                    result_r = 0.0
-                else:
-                    result_r = partial_result_r if partial_taken else -1.0
-                _close_trade(trade, "stopped", current_price, result_r)
-            elif current_price >= trade["target_price"]:
-                final_leg_r = (trade["target_price"] - trade["entry_price"]) / risk
-                result_r = partial_result_r + (0.5 * final_leg_r) if partial_taken else final_leg_r
-                _close_trade(trade, "target_hit", current_price, result_r)
-            elif days_open >= max_duration_days:
-                current_leg_r = (current_price - trade["entry_price"]) / risk
-                result_r = partial_result_r + (0.5 * current_leg_r) if partial_taken else current_leg_r
-                _close_trade(trade, "closed", current_price, result_r)
-        else:
-            if not partial_taken and current_price <= partial_trigger:
-                trade = _mark_legacy_partial_taken(trade, current_price)
-                partial_taken = True
-                partial_result_r = 0.5
-                effective_stop = trade["entry_price"]
-
-            if current_price >= effective_stop:
-                result_r = partial_result_r if partial_taken else -1.0
-                _close_trade(trade, "stopped", current_price, result_r)
-            elif current_price <= trade["target_price"]:
-                final_leg_r = (trade["entry_price"] - trade["target_price"]) / risk
-                result_r = partial_result_r + (0.5 * final_leg_r) if partial_taken else final_leg_r
-                _close_trade(trade, "target_hit", current_price, result_r)
-            elif days_open >= max_duration_days:
-                current_leg_r = (trade["entry_price"] - current_price) / risk
-                result_r = partial_result_r + (0.5 * current_leg_r) if partial_taken else current_leg_r
-                _close_trade(trade, "closed", current_price, result_r)
-        updated.append(get_trade(trade["id"]) or trade)
+        if trade["status"] != "open":
+            clear_learning_cache()
+            if trade["result_R"] is not None:
+                notify_trade_closed(trade, trade["status"], trade["result_R"])
+        updated.append(trade)
     return updated
 
 
 def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
+    execution = trade.get("metadata", {}).get("execution")
+    if execution:
+        if execution.get("pending_entry") or trade.get("status") == "cancelled":
+            return None
+        if trade.get("status") != "open":
+            return resolve_result_r(trade)
+        if trade.get("current_price") is None:
+            return None
+        return round(net_result(trade, exit_fill(trade, trade["current_price"])), 4)
     current_price = trade.get("current_price")
     direction = get_trade_direction(trade["strategy"])
     if direction == "Long":
@@ -383,31 +299,21 @@ def compute_unrealized_r(trade: dict[str, Any]) -> float | None:
 
 
 def compute_notional_pnl_usd(trade: dict[str, Any], notional_usd: float = DISPLAY_NOTIONAL_USD) -> float | None:
-    current_price = trade.get("current_price")
-    entry_price = trade.get("entry_price")
-    if current_price is None or entry_price in (None, 0):
+    entry = trade.get("entry_price")
+    stop = trade.get("stop_loss")
+    if not entry or stop is None or trade.get("status") == "cancelled":
         return None
-
-    direction = get_trade_direction(trade["strategy"])
-    if direction == "Long":
-        pnl_fraction = (current_price - entry_price) / entry_price
-    else:
-        pnl_fraction = (entry_price - current_price) / entry_price
-    if trade.get("runner_activated"):
-        return round(notional_usd * pnl_fraction, 2)
-    if trade.get("partial_taken"):
-        partial_r = float(trade.get("partial_result_R") or 0)
-        stop_loss = trade.get("stop_loss")
-        if stop_loss is None:
-            return round(notional_usd * pnl_fraction, 2)
-        original_risk_fraction = abs(entry_price - stop_loss) / entry_price
-        realized_partial = notional_usd * 0.5 * partial_r * original_risk_fraction
-        remaining_pnl = notional_usd * 0.5 * pnl_fraction
-        return round(realized_partial + remaining_pnl, 2)
-    return round(notional_usd * pnl_fraction, 2)
+    result = (resolve_result_r(trade) if trade.get("status") != "open"
+              else compute_unrealized_r(trade))
+    if result is None:
+        return None
+    # result_R already weights partial fills; use the same ledger for dollars and R.
+    return round(notional_usd * abs(entry - stop) / entry * result, 2)
 
 
 def _result_label(result_r: float | None, status: str) -> str:
+    if status == "cancelled":
+        return "Cancelled"
     if status == "open":
         return "Open"
     if result_r is None:
@@ -460,6 +366,10 @@ def enrich_trade_for_display(trade: dict[str, Any]) -> dict[str, Any]:
         display["partial_status"] = "Full size"
     display["partial_result_R"] = float(trade.get("partial_result_R") or 0)
     display["status_label"] = STATUS_LABELS.get(trade["status"], trade["status"].replace("_", " ").title())
+    if trade.get("metadata", {}).get("execution", {}).get("pending_entry"):
+        display["status_label"] = "Awaiting Next Bar Entry"
+    if trade.get("metadata", {}).get("execution", {}).get("data_gap"):
+        display["status_label"] = "Data Gap: Awaiting Missing Bars"
     result_r = resolve_result_r(trade)
     display["result_label"] = _result_label(result_r, trade["status"])
     display["result_tone"] = _result_tone(result_r, trade["status"])

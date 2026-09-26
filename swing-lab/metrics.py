@@ -6,6 +6,7 @@ from typing import Any
 
 from config import (
     APP_VERSION,
+    STRATEGY_VERSION,
     CRYPTO_SYMBOL_TO_KRAKEN_PAIR,
     LAST_STRATEGY_CHANGE_AT,
     LAST_STRATEGY_CHANGE_LABEL,
@@ -32,7 +33,7 @@ def _format_timestamp(value: str | None) -> str:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return value
-    return parsed.strftime("%b %d, %Y %H:%M UTC")
+    return parsed.astimezone(timezone.utc).strftime("%b %d, %Y %H:%M UTC")
 
 
 def _parse_date_filter(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -67,14 +68,27 @@ def _filter_trades_by_date(
 
 
 def _summary_from_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
-    closed = [trade for trade in trades if trade["status"] != "open"]
+    closed = [trade for trade in trades if trade["status"] not in ("open", "cancelled")
+                  and resolve_result_r(trade) is not None]
     open_trades = [enrich_trade_for_display(trade) for trade in trades if trade["status"] == "open"]
     wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
     total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
-    avg_r = round(total_r / len(closed), 2) if closed else 0.0
+    avg_r = round(sum(resolve_result_r(t) for t in closed) / len(closed), 4) if closed else 0.0
+    results = [resolve_result_r(t) for t in sorted(closed, key=lambda t: (datetime.fromisoformat(t.get("date_closed") or t["date_opened"]), t.get("id", 0)))]
+    gross_profit = sum(r for r in results if r > 0)
+    gross_loss = -sum(r for r in results if r < 0)
+    equity = peak = drawdown = 0.0
+    for result in results:
+        equity += result
+        peak = max(peak, equity)
+        drawdown = max(drawdown, peak - equity)
     return {
         "total_trades": len(trades),
         "closed_trades": len(closed),
+        "cancelled_trades": sum(t["status"] == "cancelled" for t in trades),
+        "unresolved_closed_trades": sum(t["status"] not in ("open", "cancelled") and resolve_result_r(t) is None for t in trades),
+        "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss else None,
+        "max_closed_drawdown_R": round(drawdown, 4),
         "win_rate": _safe_pct(len(wins), len(closed)),
         "avg_R": avg_r,
         "total_R": total_r,
@@ -89,12 +103,13 @@ def calculate_summary() -> dict[str, Any]:
 
 def analytics_by_strategy(trades: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for trade in (trades or list_trades()):
+    for trade in (list_trades() if trades is None else trades):
         grouped[trade["strategy"]].append(trade)
 
     analytics: list[dict[str, Any]] = []
     for strategy, trades in grouped.items():
-        closed = [trade for trade in trades if trade["status"] != "open"]
+        closed = [trade for trade in trades if trade["status"] not in ("open", "cancelled")
+                  and resolve_result_r(trade) is not None]
         wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
         total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
@@ -110,12 +125,13 @@ def analytics_by_strategy(trades: list[dict[str, Any]] | None = None) -> list[di
 
 def analytics_by_asset_class(trades: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for trade in (trades or list_trades()):
+    for trade in (list_trades() if trades is None else trades):
         grouped[trade["asset_class"]].append(trade)
 
     analytics: list[dict[str, Any]] = []
     for asset_class, trades in grouped.items():
-        closed = [trade for trade in trades if trade["status"] != "open"]
+        closed = [trade for trade in trades if trade["status"] not in ("open", "cancelled")
+                  and resolve_result_r(trade) is not None]
         wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
         total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
@@ -132,12 +148,13 @@ def analytics_by_asset_class(trades: list[dict[str, Any]] | None = None) -> list
 
 def analytics_by_direction(trades: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for trade in (trades or list_trades()):
+    for trade in (list_trades() if trades is None else trades):
         grouped[get_trade_direction(trade["strategy"])].append(trade)
 
     analytics: list[dict[str, Any]] = []
     for direction, trades in grouped.items():
-        closed = [trade for trade in trades if trade["status"] != "open"]
+        closed = [trade for trade in trades if trade["status"] not in ("open", "cancelled")
+                  and resolve_result_r(trade) is not None]
         wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
         total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
@@ -154,13 +171,14 @@ def analytics_by_direction(trades: list[dict[str, Any]] | None = None) -> list[d
 
 def analytics_by_setup_slice(trades: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for trade in (trades or list_trades()):
+    for trade in (list_trades() if trades is None else trades):
         key = (trade["strategy"], trade["timeframe"], get_trade_direction(trade["strategy"]))
         grouped[key].append(trade)
 
     analytics: list[dict[str, Any]] = []
     for (strategy, timeframe, direction), trades in grouped.items():
-        closed = [trade for trade in trades if trade["status"] != "open"]
+        closed = [trade for trade in trades if trade["status"] not in ("open", "cancelled")
+                  and resolve_result_r(trade) is not None]
         wins = [trade for trade in closed if (resolve_result_r(trade) or 0) > 0]
         total_r = round(sum(resolve_result_r(trade) or 0 for trade in closed), 2)
         analytics.append(
@@ -182,8 +200,11 @@ def analytics_by_setup_slice(trades: list[dict[str, Any]] | None = None) -> list
     )
 
 
-def analytics_payload(start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+def analytics_payload(start_date: str | None = None, end_date: str | None = None,
+                      strategy_version: str | None = None) -> dict[str, Any]:
     trades = _filter_trades_by_date(list_trades(), start_date=start_date, end_date=end_date)
+    if strategy_version is not None:
+        trades = [t for t in trades if t.get("metadata", {}).get("strategy_version") == strategy_version]
     return {
         "summary": _summary_from_trades(trades),
         "strategy_stats": analytics_by_strategy(trades),
@@ -195,7 +216,7 @@ def analytics_payload(start_date: str | None = None, end_date: str | None = None
 
 
 def analytics_since_strategy_change() -> dict[str, Any]:
-    payload = analytics_payload(start_date=LAST_STRATEGY_CHANGE_AT[:10])
+    payload = analytics_payload(strategy_version=STRATEGY_VERSION)
     payload["label"] = LAST_STRATEGY_CHANGE_LABEL
     payload["since_at"] = LAST_STRATEGY_CHANGE_AT
     payload["since_at_display"] = _format_timestamp(LAST_STRATEGY_CHANGE_AT)

@@ -34,7 +34,7 @@ def notify_new_trade(trade: dict) -> None:
     send_message(
         "\n".join(
             [
-                "🚀 NEW TRADE",
+                "🚀 NEW SIMULATED SETUP",
                 "",
                 f"Asset: {trade['asset']}",
                 f"Direction: {direction}",
@@ -42,7 +42,8 @@ def notify_new_trade(trade: dict) -> None:
                 f"Timeframe: {trade['timeframe']}",
                 f"Score: {trade['score']}",
                 "",
-                f"Entry: {trade['entry_price']}",
+                f"Signal price: {trade['entry_price']}",
+                "Entry: next hourly bar open, with configured slippage",
                 f"Stop: {trade['stop_loss']}",
                 f"Target: {trade['target_price']}",
                 f"RR: {trade['R_multiple']}",

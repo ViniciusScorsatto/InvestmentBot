@@ -13,12 +13,19 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-LAST_STRATEGY_CHANGE_LABEL = "Learning Model Overlay"
-LAST_STRATEGY_CHANGE_AT = "2026-05-30T00:00:00+12:00"
+STRATEGY_VERSION = "execution-v2-expectancy-v1"
+LAST_STRATEGY_CHANGE_LABEL = "Execution and Expectancy Upgrade"
+LAST_STRATEGY_CHANGE_AT = "2026-09-26T00:00:00+12:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Candidates keep using live market APIs and deterministic strategy rules, then receive a learned edge score from closed trade outcomes. "
-    "The model only blocks setups after enough similar historical trades exist."
+    "Completed session-aligned candles, chronological OHLC exits, explicit costs, and expectancy-based learning. "
+    "Current-version results exclude legacy trades."
 )
+# Illustrative per-fill costs, frozen in each new trade; calibrate to the intended venue.
+SIM_FEE_BPS = float(os.getenv("SWING_LAB_SIM_FEE_BPS", "5"))
+SIM_SLIPPAGE_BPS = float(os.getenv("SWING_LAB_SIM_SLIPPAGE_BPS", "5"))
+if not (0 <= SIM_FEE_BPS < 10000 and 0 <= SIM_SLIPPAGE_BPS < 10000):
+    raise ValueError("Simulation costs must be finite and between 0 and 10000 bps")
+
 
 MAX_TRADES_PER_DAY = 5
 PREFERRED_TOP_SETUPS = 3
