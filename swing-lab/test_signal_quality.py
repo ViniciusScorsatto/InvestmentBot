@@ -12,6 +12,48 @@ import config, earnings, experiments, execution, learning_model, market_bars, si
 
 
 class EntryQualityTests(unittest.TestCase):
+    def test_tiny_stop_rejected_despite_high_net_reward_risk(self):
+        trade = position(pending=True, costs=5)
+        trade['stop_loss'] = trade['effective_stop_loss'] = 99.99
+        result = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+        settings = result['metadata']['execution']
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertGreater(settings['entry_net_r'], 1.8)
+        self.assertGreater(settings['entry_cost_r'], 2)
+        self.assertEqual(settings['cancel_reason'], 'entry_cost_r_above_maximum')
+        self.assertIsNone(result['result_R'])
+        self.assertEqual([e['kind'] for e in settings['events']], ['entry_cancelled'])
+
+    def test_cost_cap_is_frozen_and_legacy_contract_is_not_retrofitted(self):
+        trade = position(pending=True, costs=5)
+        trade['stop_loss'] = trade['effective_stop_loss'] = 99.99
+        trade['metadata']['execution'].pop('max_entry_cost_r')
+        trade['metadata']['execution']['version'] = 3
+        result = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+        self.assertEqual(result['status'], 'stopped')
+        self.assertLess(result['result_R'], -3)
+        trade = position(pending=True, costs=5)
+        trade['metadata']['execution']['max_entry_cost_r'] = .001
+        with patch.object(execution, 'MAX_ENTRY_COST_R', 1):
+            result = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertEqual(result['metadata']['execution']['max_entry_cost_r'], .001)
+
+    def test_cost_guard_short_symmetry_zero_cost_and_exact_boundary(self):
+        for short in (False, True):
+            trade = position('Breakdown' if short else 'Breakout', short=short, pending=True, costs=5)
+            trade['stop_loss'] = trade['effective_stop_loss'] = 100.01 if short else 99.99
+            result = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+            self.assertEqual(result['metadata']['execution']['cancel_reason'], 'entry_cost_r_above_maximum')
+        trade = position(pending=True, costs=0)
+        result = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+        self.assertEqual(result['metadata']['execution']['entry_cost_r'], 0)
+        self.assertEqual(result['status'], 'open')
+        trade = position(pending=True, costs=5)
+        first = execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))
+        trade['metadata']['execution']['max_entry_cost_r'] = first['metadata']['execution']['entry_cost_r']
+        self.assertEqual(execution.replay_bars(trade, [bar()], T0+timedelta(hours=1))['status'], 'open')
+
     def test_gap_with_positive_payoff_still_cancels_below_floor(self):
         result = execution.replay_bars(position(pending=True), [bar(op=120, high=125, low=119)], T0+timedelta(hours=1))
         self.assertEqual(result["status"], "cancelled")

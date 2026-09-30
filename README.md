@@ -298,6 +298,29 @@ Unknown observations are excluded from the earnings comparison and visibly count
 as unavailable; the funded portfolio remains on baseline rules. Calendar revisions
 cannot rewrite already-recorded decisions.
 
+## Entry cost-to-risk guard
+
+New `quality-v3-cost-guard-v1` signals use execution version 4. At the actual
+simulated entry, a separate guard rejects an entry when the cost of an ordinary
+stop exit exceeds `SWING_LAB_MAX_ENTRY_COST_R` (default **0.25R**, configurable
+in `(0, 1]`). This is a fixed operating limit, not an optimized performance claim.
+It supplements the minimum net reward/risk check, which can accept entries very
+close to the stop when the distant target still provides a large reward ratio.
+
+Cost R = (entry fee + estimated stop-exit fee + adverse stop-exit slippage) /
+absolute distance from the slipped entry fill to the original stop. Entry slippage
+is already reflected in that entry price and is not counted twice. Unexpected
+stop gaps can still produce larger losses; the guard is not a guaranteed loss cap.
+Equality with the configured limit is allowed. Excess costs cancel the entry with
+`entry_cost_r_above_maximum`, no filled outcome, no cash loss, and released capital
+reservations. The same frozen guard applies to funded and baseline shadow signals.
+
+Existing contracts without the setting keep their prior behavior. There is no
+retrospective rewrite of trades or returns. The new strategy version separates
+performance and training cohorts; the challenger also checks the frozen cost cap
+for compatibility. Exports include `entry_cost_R`, `max_entry_cost_R`, and the
+cancellation reason. The other execution/exit experiments remain in shadow.
+
 ## Model challenger (shadow only)
 
 `ridge-entry-v2` adds model research without changing funded trade selection,

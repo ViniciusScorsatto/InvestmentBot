@@ -184,8 +184,8 @@ class StrategyAdjustmentTests(unittest.TestCase):
             response = api.analytics_page(request=object(), start_date=None, end_date=None)
 
         self.assertEqual(response, "ok")
-        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-26")
-        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "quality-v2-experiments-v1")
+        self.assertEqual(payload_mock.call_args.kwargs["start_date"], "2026-09-30")
+        self.assertEqual(payload_mock.call_args.kwargs["strategy_version"], "quality-v3-cost-guard-v1")
 
     def test_learning_model_does_not_block_until_specific_slice_has_enough_sample(self) -> None:
         rows = [

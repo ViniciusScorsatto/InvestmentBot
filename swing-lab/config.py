@@ -13,11 +13,11 @@ APP_HOST = os.getenv("SWING_LAB_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("SWING_LAB_PORT", "8000")))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("RAILWAY_DEPLOYMENT_ID", "local"))
-STRATEGY_VERSION = "quality-v2-experiments-v1"
-LAST_STRATEGY_CHANGE_LABEL = "Entry Quality and Controlled Experiments"
-LAST_STRATEGY_CHANGE_AT = "2026-09-27T00:00:00+12:00"
+STRATEGY_VERSION = "quality-v3-cost-guard-v1"
+LAST_STRATEGY_CHANGE_LABEL = "Entry Cost-to-Risk Guard"
+LAST_STRATEGY_CHANGE_AT = "2026-09-30T00:00:00+00:00"
 LAST_STRATEGY_CHANGE_NOTE = (
-    "Cost-aware entry checks, session-normalized volume, conservative learning, and matched shadow experiments. "
+    "New entries cap estimated fees and stop slippage at 0.25R by default. "
     "Current-version results exclude legacy trades."
 )
 # Illustrative per-fill costs, frozen in each new trade; calibrate to the intended venue.
@@ -191,3 +191,8 @@ if not 0 < MIN_ENTRY_NET_R <= 10:
     raise ValueError("Entry net reward/risk must be finite and in (0, 10]")
 if LEARNING_MODEL_MIN_SAMPLE < 30 or LEARNING_MODEL_BLOCK_MIN_SAMPLE < max(60, LEARNING_MODEL_MIN_SAMPLE):
     raise ValueError("Learning requires at least 30 ranking and 60 blocking observations")
+
+# Operating cost budget, fixed prospectively rather than optimized on recent returns.
+MAX_ENTRY_COST_R = float(os.getenv("SWING_LAB_MAX_ENTRY_COST_R", "0.25"))
+if not 0 < MAX_ENTRY_COST_R <= 1:
+    raise ValueError("Maximum entry cost must be finite and in (0, 1] R")

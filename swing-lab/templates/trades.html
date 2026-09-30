@@ -12,7 +12,9 @@
     form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
     input, select, button { padding: 10px 12px; border-radius: 10px; border: 1px solid #cabfa6; font: inherit; }
     button { background: #0f766e; color: white; cursor: pointer; }
+    .table-wrap { width: 100%; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
+    .number { white-space: nowrap; font-variant-numeric: tabular-nums; }
     th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #e4ddcb; }
     th { font-size: 13px; text-transform: uppercase; color: #66726b; }
     .positive { color: #0f766e; font-weight: bold; }
@@ -40,6 +42,7 @@
         <button type="submit">Filter</button>
       </form>
 
+      <div class="table-wrap" role="region" aria-label="Trades table" tabindex="0">
       <table>
         <thead>
           <tr>
@@ -63,14 +66,15 @@
             <td><a href="/trades/{{ trade.id }}">{{ trade.asset }}</a></td>
             <td>{{ trade.direction }}</td>
             <td>{{ trade.strategy }}</td>
-            <td>{{ trade.entry_price }}</td>
-            <td>{{ trade.stop_loss }}</td>
-            <td>{{ trade.effective_stop_loss }}</td>
-            <td>{{ trade.target_price }}</td>
+            <td>{{ ("%.6f"|format(trade.entry_price)).rstrip("0").rstrip(".") if trade.entry_price is not none else "—" }}</td>
+            <td>{{ ("%.6f"|format(trade.stop_loss)).rstrip("0").rstrip(".") if trade.stop_loss is not none else "—" }}</td>
+            <td>{{ ("%.6f"|format(trade.effective_stop_loss)).rstrip("0").rstrip(".") if trade.effective_stop_loss is not none else "—" }}</td>
+            <td>{{ ("%.6f"|format(trade.target_price)).rstrip("0").rstrip(".") if trade.target_price is not none else "—" }}</td>
             <td>{{ trade.partial_status }}</td>
             <td>{{ trade.status_label }}</td>
             <td><span class="badge {{ trade.result_tone }}">{{ trade.result_label }}</span></td>
-            <td class="{{ trade.result_tone }}">{{ trade.result_R if trade.result_R is not none else trade.unrealized_R }}</td>
+            {% set displayed_r = trade.result_R if trade.result_R is not none else trade.unrealized_R %}
+            <td class="number {{ trade.result_tone }}">{{ "%.2f"|format(displayed_r) if displayed_r is not none else "—" }}</td>
             <td class="{{ trade.result_tone }}">{{ trade.pnl_usd_100_label }}</td>
           </tr>
           {% else %}
@@ -78,6 +82,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </body>

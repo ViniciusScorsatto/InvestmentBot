@@ -34,7 +34,7 @@ KEYS = {
     "portfolio_snapshots": ["id"], "signal_experiments": ["signal_id", "variant"],
 }
 OUTCOME_COLUMNS = ["outcome_state", "net_result_R", "opportunity_result_R", "outcome_closed_at", "pending_entry",
-                   "execution_version", "fee_bps", "slippage_bps", "entry_at", "entry_fee_R", "cancel_reason", "execution_events_json"]
+                   "execution_version", "fee_bps", "slippage_bps", "entry_at", "entry_fee_R", "entry_cost_R", "max_entry_cost_R", "cancel_reason", "execution_events_json"]
 EXTRA = {
     "signals": ["portfolio_selected", "signal_entry_price", "signal_stop_loss", "signal_target_price", "rule_score", "combined_score",
                 "rsi", "volume_ratio", "distance_ema20_pct", "ema_gap_pct", "atr"] + OUTCOME_COLUMNS,
@@ -44,7 +44,7 @@ EXTRA = {
     "signal_experiments": OUTCOME_COLUMNS,
 }
 SETTINGS = ("STRATEGY_VERSION", "LAST_STRATEGY_CHANGE_AT", "STRATEGY_SETTINGS", "WATCHLIST", "MIN_SCORE", "MIN_R_MULTIPLE",
-            "MIN_ENTRY_NET_R", "PREFERRED_TOP_SETUPS", "MAX_TRADES_PER_DAY", "LEARNING_MODEL_ENABLED", "LEARNING_MODEL_WEIGHT",
+            "MIN_ENTRY_NET_R", "MAX_ENTRY_COST_R", "PREFERRED_TOP_SETUPS", "MAX_TRADES_PER_DAY", "LEARNING_MODEL_ENABLED", "LEARNING_MODEL_WEIGHT",
             "LEARNING_MODEL_MIN_SAMPLE", "LEARNING_MODEL_BLOCK_MIN_SAMPLE", "LEARNING_MODEL_MIN_SCORE", "LEARNING_MODEL_MIN_WEEKS",
             "PORTFOLIO_INITIAL_CASH", "PORTFOLIO_RISK_PER_TRADE", "PORTFOLIO_MAX_RISK", "PORTFOLIO_MAX_GROSS",
             "PORTFOLIO_MAX_POSITION", "PORTFOLIO_MAX_GROUP", "PORTFOLIO_MAX_GROUP_POSITIONS")
@@ -176,7 +176,8 @@ def outcome(state, snapshot_at, available_at=None, require_arrival=False):
                 outcome_closed_at=closed, pending_entry=settings.get("pending_entry"),
                 execution_version=settings.get("version"), fee_bps=settings.get("fee_bps"),
                 slippage_bps=settings.get("slippage_bps"), entry_at=settings.get("entry_at"),
-                entry_fee_R=settings.get("entry_fee_r"), cancel_reason=settings.get("cancel_reason"),
+                entry_fee_R=settings.get("entry_fee_r"), entry_cost_R=settings.get("entry_cost_r"),
+                max_entry_cost_R=settings.get("max_entry_cost_r"), cancel_reason=settings.get("cancel_reason"),
                 execution_events_json=settings.get("events"))
 
 

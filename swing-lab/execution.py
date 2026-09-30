@@ -5,18 +5,18 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
-from config import SIM_FEE_BPS, SIM_SLIPPAGE_BPS, MIN_ENTRY_NET_R, strategy_max_trade_duration_days
+from config import SIM_FEE_BPS, SIM_SLIPPAGE_BPS, MIN_ENTRY_NET_R, MAX_ENTRY_COST_R, strategy_max_trade_duration_days
 from market_bars import as_datetime, next_hour_start
 from trade_utils import get_trade_direction
 
-EXECUTION_VERSION = 3
+EXECUTION_VERSION = 4
 
 
 def execution_settings(at: datetime, strategy: str, *, pending_entry: bool = True) -> dict[str, Any]:
     return {"version": EXECUTION_VERSION, "cursor": at.isoformat(),
             "pending_entry": pending_entry, "fee_bps": SIM_FEE_BPS,
             "slippage_bps": SIM_SLIPPAGE_BPS, "entry_fee_r": 0.0,
-            "min_entry_net_r": MIN_ENTRY_NET_R, "breakeven_at_r": 1.0,
+            "min_entry_net_r": MIN_ENTRY_NET_R, "max_entry_cost_r": MAX_ENTRY_COST_R, "breakeven_at_r": 1.0,
             "max_duration_days": strategy_max_trade_duration_days(strategy), "events": []}
 
 
@@ -98,13 +98,22 @@ def replay_bars(original: dict[str, Any], bars: list[dict[str, Any]], now: datet
             loss = side(trade) * (fill - stop_fill) + fee * (fill + stop_fill)
             net_rr = reward / loss if loss > 0 else None
             settings["entry_net_r"] = net_rr
+            price_risk = risk(trade)
+            # R already uses the slipped entry fill. Count both fees and additional
+            # stop-exit slippage; do not double-count entry slippage in that basis.
+            cost_r = (side(trade) * (trade["stop_loss"] - stop_fill)
+                      + fee * (fill + stop_fill)) / price_risk if price_risk > 0 else None
+            settings["entry_cost_r"] = cost_r
+            above_cost_cap = ("max_entry_cost_r" in settings and cost_r is not None
+                              and cost_r > settings["max_entry_cost_r"])
             invalid = risk(trade) <= 0 or side(trade) * (trade["target_price"] - fill) <= 0
             if "min_entry_net_r" in settings:
                 invalid = invalid or reward <= 0 or loss <= 0
             # Missing setting means a frozen pre-upgrade execution contract.
             below_floor = "min_entry_net_r" in settings and net_rr is not None and net_rr < settings["min_entry_net_r"]
-            if invalid or below_floor:
-                settings["cancel_reason"] = "invalid_entry" if invalid else "entry_net_r_below_minimum"
+            if invalid or above_cost_cap or below_floor:
+                settings["cancel_reason"] = ("invalid_entry" if invalid else
+                                             "entry_cost_r_above_maximum" if above_cost_cap else "entry_net_r_below_minimum")
                 trade.update(status="cancelled", date_closed=start.isoformat(), result_R=None)
                 settings.update(pending_entry=False, cursor=end.isoformat())
                 event("entry_cancelled", fill, start, 0)

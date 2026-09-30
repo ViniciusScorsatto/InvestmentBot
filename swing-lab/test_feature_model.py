@@ -89,6 +89,14 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(len(observations),1)
         self.assertEqual(coverage["incompatible_contract"],4)
 
+    def test_old_or_different_cost_cap_is_not_compatible_training(self):
+        row = signal_row()
+        self.assertTrue(model_dataset.contract_matches(row))
+        row['shadow_state']['metadata']['execution'].pop('max_entry_cost_r')
+        self.assertFalse(model_dataset.contract_matches(row))
+        row['shadow_state']['metadata']['execution']['max_entry_cost_r'] = .9
+        self.assertFalse(model_dataset.contract_matches(row))
+
     def test_original_signal_features_never_post_entry_values(self):
         row=signal_row();row["shadow_state"]["entry_price"]=120
         observations,_=model_dataset.dataset([row],START+timedelta(days=2))

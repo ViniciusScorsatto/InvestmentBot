@@ -54,6 +54,28 @@ class DatabaseTests(unittest.TestCase):
         with patch.object(trades,"_now_utc",return_value=now or T0+timedelta(hours=2)),patch.object(trades,"fetch_asset_data",return_value={"execution":bars}):
             return trades.update_open_trades()
 
+    def test_entry_cost_rejection_releases_cash_and_matches_shadow(self):
+        candidate = setup()
+        candidate['stop_loss'] = 99.99
+        created = self.create([candidate])
+        self.assertEqual(len(created), 1)
+        self.update([bar()])
+        with patch.object(scanner, 'fetch_asset_data', return_value={'execution':[bar()]}):
+            signals.update_shadow_trades(T0+timedelta(hours=2))
+        trade = trades.get_trade(created[0])
+        shadow = db.fetch_one('SELECT shadow_state FROM signals')['shadow_state']
+        for state in (trade, shadow):
+            self.assertEqual(state['status'], 'cancelled')
+            self.assertIsNone(state['result_R'])
+            self.assertEqual(state['metadata']['execution']['cancel_reason'], 'entry_cost_r_above_maximum')
+        account = db.fetch_one('SELECT * FROM portfolio_accounts')
+        self.assertEqual(account['reserved_cash'], 0)
+        self.assertEqual(account['cash'], account['initial_cash'])
+        ledger = db.fetch_all('SELECT * FROM portfolio_ledger')
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger[0]['kind'], 'entry_cancelled')
+        self.assertEqual(ledger[0]['cash_delta'], 0)
+
     def test_analysis_archive_has_complete_joinable_history_and_null_pending_results(self):
         import csv, io, zipfile
         import report_export

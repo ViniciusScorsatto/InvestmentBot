@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import math
 
-from config import STRATEGY_VERSION, SIM_FEE_BPS, SIM_SLIPPAGE_BPS, MIN_ENTRY_NET_R, STRATEGY_SETTINGS, strategy_max_trade_duration_days
+from config import STRATEGY_VERSION, SIM_FEE_BPS, SIM_SLIPPAGE_BPS, MIN_ENTRY_NET_R, MAX_ENTRY_COST_R, STRATEGY_SETTINGS, strategy_max_trade_duration_days
 from db import fetch_all
 from execution import EXECUTION_VERSION
 from market_bars import as_datetime
@@ -33,7 +33,7 @@ def feature_vector(setup):
 def contract_definition():
     return {"strategy_version": STRATEGY_VERSION, "execution_version": EXECUTION_VERSION,
             "fee_bps": SIM_FEE_BPS, "slippage_bps": SIM_SLIPPAGE_BPS,
-            "min_entry_net_r": MIN_ENTRY_NET_R, "breakeven_at_r": 1.0,
+            "min_entry_net_r": MIN_ENTRY_NET_R, "max_entry_cost_r": MAX_ENTRY_COST_R, "breakeven_at_r": 1.0,
             "max_duration_days": {name: strategy_max_trade_duration_days(name) for name in STRATEGY_SETTINGS}}
 
 
@@ -55,6 +55,7 @@ def contract_matches(row):
             and execution.get("fee_bps") == SIM_FEE_BPS
             and execution.get("slippage_bps") == SIM_SLIPPAGE_BPS
             and execution.get("min_entry_net_r") == MIN_ENTRY_NET_R
+            and execution.get("max_entry_cost_r") == MAX_ENTRY_COST_R
             and execution.get("breakeven_at_r", 1) == 1
             and execution.get("max_duration_days") == strategy_max_trade_duration_days(row.get("strategy", "")))
 
