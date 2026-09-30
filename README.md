@@ -421,6 +421,42 @@ later completed periods and prospective results before promoting a model. A
 synthetic regression test demonstrates recovery of a known feature/return
 relationship; it does not measure investment performance.
 
+## Downloading an analysis report
+
+On **Analytics**, click **Download analysis report**. The browser downloads a ZIP
+from `GET /analytics/export` containing nine UTF-8 CSV files plus `metadata.json`
+and `README.txt` with joins and metric definitions:
+
+- `signals.csv`: original features, approval/selection, latest baseline outcomes,
+  signal IDs, observation times and label arrival times.
+- `model_predictions.csv` and `model_snapshots.csv`: frozen rankings, probabilities,
+  expected returns, versions, training cutoffs and complete fitted artifacts.
+- `trades.csv`: simulated funded trades, partial exits, net R and frozen costs/fills.
+- `portfolio_accounts.csv`, `portfolio_positions.csv`, `portfolio_ledger.csv`,
+  `portfolio_snapshots.csv`: balances, quantities, cash flows and sampled equity.
+- `signal_experiments.csv`: separately identified experimental variants.
+
+The archive always includes **all recorded dates, strategy/model versions and
+statuses**. Page date filters are recorded as context in metadata, not applied to
+archive rows. This keeps comparison batches and portfolio cash history complete.
+Filter the CSVs after download, using the documented timestamps and version keys.
+No historical signals or missing fills are reconstructed. Pending results stay
+blank; cancelled entries are zero opportunities but are not filled-trade losses.
+Raw nested records are preserved in JSON columns for detailed analysis.
+
+A read-only PostgreSQL repeatable-read transaction keeps all files consistent even
+while scans update the app. Rows are read using server cursors; archives larger
+than 8 MiB spool to temporary disk. Downloads do not refit models, fetch prices,
+change account state or send notifications. No credentials or notification data
+are included. CSV text is escaped against spreadsheet formulas while negative
+numeric returns retain their numeric representation. HTTP responses use
+`Cache-Control: no-store`. Empty datasets still include column headers. Failed
+exports return a retryable error instead of a partial archive.
+
+Upload the ZIP for analysis so predictions, outcomes and portfolio records can be
+joined by their stable IDs. Avoid summing trade results with baseline signal
+results: selected trades and signals represent overlapping opportunities.
+
 ## Database and notification safeguards
 
 Startup runs an additive migration under a PostgreSQL advisory lock. It creates

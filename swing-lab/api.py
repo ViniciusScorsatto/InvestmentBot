@@ -149,6 +149,7 @@ def analytics_page(
             "learning_model_favored": [row for row in learning_rows if row["stance"] == "favored"][:8],
             "learning_model_penalized": [row for row in learning_rows if row["stance"] == "penalized"][:8],
             "filters": {"start_date": start_date or "", "end_date": end_date or ""},
+            "export_current_strategy_only": default_view,
         },
     )
 
@@ -203,3 +204,28 @@ def model_research_payload() -> JSONResponse:
 def model_chronological_payload() -> JSONResponse:
     from model_research import chronological_evaluation
     return JSONResponse(chronological_evaluation())
+
+
+@router.get("/analytics/export")
+def analysis_report_export(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    current_strategy_only: bool = False,
+):
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+    from starlette.background import BackgroundTask
+    from report_export import build_report, export_context, report_chunks
+    try:
+        context = export_context(start_date, end_date, current_strategy_only)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Use valid YYYY-MM-DD dates with start on or before end.") from exc
+    try:
+        output, filename, size = build_report(context)
+    except Exception:
+        LOGGER.exception("Analysis report export failed")
+        raise HTTPException(status_code=503, detail="Report export is temporarily unavailable. Please retry.") from None
+    return StreamingResponse(report_chunks(output), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                                      "Content-Length": str(size), "Cache-Control": "no-store"},
+                             background=BackgroundTask(output.close))

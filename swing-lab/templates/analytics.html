@@ -56,6 +56,13 @@
     </nav>
 
     <h1>Analytics</h1>
+    <form action="/analytics/export" method="get" aria-label="Download analysis report">
+      <input type="hidden" name="start_date" value="{{ filters.start_date }}">
+      <input type="hidden" name="end_date" value="{{ filters.end_date }}">
+      <input type="hidden" name="current_strategy_only" value="{{ 'true' if export_current_strategy_only else 'false' }}">
+      <button type="submit">Download analysis report</button>
+      <p class="muted">ZIP with CSV files for all recorded history, including pending signals, model predictions and portfolio equity. Page date filters are recorded as context; the download includes all dates.</p>
+    </form>
 
     <div class="stack">
       <section class="panel" aria-label="Simulated portfolio">

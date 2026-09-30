@@ -54,6 +54,87 @@ class DatabaseTests(unittest.TestCase):
         with patch.object(trades,"_now_utc",return_value=now or T0+timedelta(hours=2)),patch.object(trades,"fetch_asset_data",return_value={"execution":bars}):
             return trades.update_open_trades()
 
+    def test_analysis_archive_has_complete_joinable_history_and_null_pending_results(self):
+        import csv, io, zipfile
+        import report_export
+        self.create([setup(), setup("ETH", approved=False)])
+        self.update([bar(low=85)])
+        # Shadow signals remain pending until their independent update arrives.
+        output, filename, size = report_export.build_report(report_export.export_context("2030-01-01"))
+        with output, zipfile.ZipFile(output) as archive:
+            self.assertTrue(filename.endswith(".zip"))
+            self.assertGreater(size, 100)
+            metadata = json.loads(archive.read("metadata.json"))
+            self.assertFalse(metadata["analytics_filter_context"]["applied_to_export_rows"])
+            self.assertEqual(metadata["files"]["signals.csv"]["rows"], 2)
+            self.assertEqual(set(archive.namelist()), {name+".csv" for name in report_export.TABLES} | {"metadata.json", "README.txt"})
+            def rows(name):
+                return list(csv.DictReader(io.StringIO(archive.read(name+".csv").decode())))
+            exported_signals = rows("signals")
+            predictions = rows("model_predictions")
+            snapshots = rows("model_snapshots")
+            exported_trades = rows("trades")
+            self.assertEqual({r['signal_id'] for r in predictions}, {r['signal_id'] for r in exported_signals})
+            self.assertTrue(all(r['snapshot_id'] in {m['snapshot_id'] for m in snapshots} for r in predictions))
+            self.assertTrue(all(r['opportunity_result_R'] == '' for r in exported_signals))
+            self.assertEqual({r['model_approved'] for r in exported_signals}, {'true','false'})
+            self.assertEqual(len(exported_trades), 1)
+            self.assertEqual(exported_trades[0]['outcome_state'], 'resolved_filled')
+            self.assertLess(float(exported_trades[0]['net_result_R']), 0)
+            self.assertTrue(rows('portfolio_ledger'))
+            self.assertTrue(rows('portfolio_snapshots'))
+            self.assertTrue(rows('signal_experiments'))
+            self.assertNotIn('DATABASE_URL', metadata['current_settings'])
+            self.assertNotIn('TELEGRAM_BOT_TOKEN', metadata['current_settings'])
+
+    def test_analysis_archive_is_consistent_during_concurrent_signal_write(self):
+        import csv, io, zipfile
+        import report_export
+        self.create([setup()])
+        original = report_export.export_row
+        inserted = False
+        def concurrent_write(table, row, at):
+            nonlocal inserted
+            if table == 'signals' and not inserted:
+                inserted = True
+                self.create([setup('ETH')], at=T0+timedelta(hours=1))
+            return original(table, row, at)
+        with patch.object(report_export, 'export_row', side_effect=concurrent_write):
+            output, _, _ = report_export.build_report(report_export.export_context())
+        with output, zipfile.ZipFile(output) as archive:
+            def rows(name):
+                return list(csv.DictReader(io.StringIO(archive.read(name+'.csv').decode())))
+            self.assertEqual(len(rows('signals')), 1)
+            self.assertEqual(len(rows('model_predictions')), 1)
+            self.assertEqual(len(rows('trades')), 1)
+        self.assertEqual(db.fetch_one('SELECT count(*) AS n FROM signals')['n'], 2)
+
+    def test_analysis_download_response_headers_empty_files_and_validation(self):
+        import asyncio, io, zipfile
+        from fastapi import HTTPException
+        import api
+        response = api.analysis_report_export()
+        async def consume():
+            return b''.join([chunk async for chunk in response.body_iterator])
+        content = asyncio.run(consume())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['content-type'], 'application/zip')
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertIn('attachment;', response.headers['content-disposition'])
+        self.assertEqual(int(response.headers['content-length']), len(content))
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            self.assertTrue(archive.read('signals.csv').startswith(b'signal_id,'))
+            self.assertEqual(len(archive.read('signals.csv').splitlines()), 1)
+        for start, end in [('bad', None), ('2030-01-01', '2026-01-01')]:
+            with self.assertRaises(HTTPException) as caught:
+                api.analysis_report_export(start, end)
+            self.assertEqual(caught.exception.status_code, 422)
+        with patch('report_export.build_report', side_effect=RuntimeError('private connection details')):
+            with self.assertRaises(HTTPException) as caught:
+                api.analysis_report_export()
+            self.assertEqual(caught.exception.status_code, 503)
+            self.assertNotIn('private connection', caught.exception.detail)
+
     def test_feature_challenger_fits_persisted_history_and_records_real_prediction(self):
         # Synthetic relationship exercises the whole DB -> fit -> frozen prediction path.
         # It is not a market-performance test.
